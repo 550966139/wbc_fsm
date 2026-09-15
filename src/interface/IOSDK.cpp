@@ -1,6 +1,7 @@
 #include "interface/IOSDK.h"
 #include <stdio.h>
 #include <iostream>
+#include <cstdlib>
 
 uint32_t crc32_core(uint32_t *ptr, uint32_t len)
 {
@@ -36,8 +37,12 @@ uint32_t crc32_core(uint32_t *ptr, uint32_t len)
 
 IOSDK::IOSDK()
 {
-    // ChannelFactory::Instance()->Init(0, "eth0"); // eth0 for real robot
-    ChannelFactory::Instance()->Init(1, "lo"); // lo for simulation
+    const char *iface = std::getenv("UNITREE_DDS_IFACE");
+    if (!iface || !*iface) iface = "lo";
+    const char *domain_env = std::getenv("UNITREE_DDS_DOMAIN");
+    const int domain = domain_env ? std::atoi(domain_env) : 1;
+    std::cout << "DDS interface: " << iface << ", domain: " << domain << std::endl;
+    ChannelFactory::Instance()->Init(domain, iface);
 
     lowcmd_publisher_.reset(new ChannelPublisher<LowCmd_>(HG_CMD_TOPIC));
     lowcmd_publisher_->InitChannel();
