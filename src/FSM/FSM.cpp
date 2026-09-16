@@ -31,7 +31,16 @@ void FSM::run(){
     try{
         _startTime = getSystemTime();  
         
-        _ctrlComp->sendRecv(); 
+        // Receive first, run the state machine, then publish the newly
+        // computed command. This removes the one-cycle stale-command window.
+        _ctrlComp->ioInter->receive(_ctrlComp->lowState);
+        if (!_ctrlComp->safetyCheck()) {
+            _ctrlComp->setDampingCommand();
+            _ctrlComp->ioInter->send(_ctrlComp->lowCmd);
+            _ctrlComp->lowState->userCmd = UserCommand::L2_B;
+            absoluteWait(_startTime, (long long)(_ctrlComp->dt * 1000000));
+            return;
+        }
 
         if(_mode == FSMMode::NORMAL){  
             _currentState->run();  
@@ -50,6 +59,8 @@ void FSM::run(){
             _mode = FSMMode::NORMAL; 
             _currentState->run(); 
         }
+
+        _ctrlComp->ioInter->send(_ctrlComp->lowCmd);
 
         absoluteWait(_startTime, (long long)(_ctrlComp->dt * 1000000));  
     }catch (const std::exception& e) {

@@ -2,6 +2,8 @@
 #define LOWLEVELSTATE_HPP
 
 #include <iostream>
+#include <chrono>
+#include <cstdint>
 #include "common/mathTypes.h"
 #include "common/mathTools.h"
 #include "interface/CmdPanel.h"
@@ -67,7 +69,10 @@ struct LowlevelState
 {
     IMU imu;
     MotorState motorState[29];
-    UserCommand userCmd;
+    UserCommand userCmd = UserCommand::NONE;
+    bool received = false;
+    std::chrono::steady_clock::time_point receivedAt{};
+    std::uint64_t sequence = 0;
     UserValue userValue;
 
 

@@ -1,8 +1,12 @@
 #include "interface/IOSDK.h"
-#include <stdio.h>
-#include <iostream>
+#include <charconv>
 #include <cstdlib>
-
+#include <cstring>
+#include <iostream>
+#include <stdexcept>
+#include <cmath>
+using namespace unitree::robot;
+using namespace unitree_hg::msg::dds_;
 uint32_t crc32_core(uint32_t *ptr, uint32_t len)
 {
     unsigned int xbit = 0;
@@ -12,7 +16,7 @@ uint32_t crc32_core(uint32_t *ptr, uint32_t len)
 
     for (unsigned int i = 0; i < len; i++)
     {
-        xbit = 1 << 31;
+        xbit = 1u << 31;
         data = ptr[i];
         for (unsigned int bits = 0; bits < 32; bits++)
         {
@@ -35,163 +39,144 @@ uint32_t crc32_core(uint32_t *ptr, uint32_t len)
     return CRC32;
 }
 
-IOSDK::IOSDK()
-{
-    const char *iface = std::getenv("UNITREE_DDS_IFACE");
-    if (!iface || !*iface) iface = "lo";
-    const char *domain_env = std::getenv("UNITREE_DDS_DOMAIN");
-    const int domain = domain_env ? std::atoi(domain_env) : 1;
-    std::cout << "DDS interface: " << iface << ", domain: " << domain << std::endl;
-    ChannelFactory::Instance()->Init(domain, iface);
-
-    lowcmd_publisher_.reset(new ChannelPublisher<LowCmd_>(HG_CMD_TOPIC));
-    lowcmd_publisher_->InitChannel();
-
-    lowstate_subscriber_.reset(new ChannelSubscriber<LowState_>(HG_STATE_TOPIC));
-    lowstate_subscriber_->InitChannel(std::bind(&IOSDK::LowStateHandler, this, std::placeholders::_1), 1);
-
-    counter_ = 0;
-    userCmd_ = UserCommand::NONE;
-    userValue_.setZero();
-    mode_machine_ = 0;
+IOSDK::IOSDK(bool use23) : use23_(use23) {
+  const char* iface=std::getenv("UNITREE_DDS_IFACE");
+  if(!iface || !*iface) iface="lo";
+  const char* raw=std::getenv("UNITREE_DDS_DOMAIN");
+  unsigned domain=1;
+  if(raw) {
+    auto result=std::from_chars(raw,raw+std::strlen(raw),domain);
+    if(result.ec!=std::errc{} || result.ptr!=raw+std::strlen(raw) || domain>232)
+      throw std::runtime_error("UNITREE_DDS_DOMAIN must be an integer in [0,232]");
+  }
+  if(domain==0 && std::string(iface)=="lo")
+    throw std::runtime_error("real domain 0 requires an explicit robot DDS interface");
+  std::cout<<"DDS interface "<<iface<<", domain "<<domain<<std::endl;
+  ChannelFactory::Instance()->Init(domain,iface);
+  publisher_.reset(new ChannelPublisher<LowCmd_>("rt/lowcmd"));
+  publisher_->InitChannel();
+  subscriber_.reset(new ChannelSubscriber<LowState_>("rt/lowstate"));
+  subscriber_->InitChannel(std::bind(&IOSDK::LowStateHandler,this,std::placeholders::_1),1);
+  publisherThread_=std::thread(&IOSDK::publishLoop,this);
 }
-
-void IOSDK::sendRecv(const LowlevelCmd *cmd, LowlevelState *state)
-{
-    // send control cmd
-    LowCmd_ dds_low_command;
-    dds_low_command.mode_pr() = static_cast<uint8_t>(Mode::PR);
-    dds_low_command.mode_machine() = mode_machine_;
-    for (size_t i = 0; i < G1_NUM_MOTOR; i++)
-    {
-        
-        dds_low_command.motor_cmd().at(i).mode() = 1; // 1:Enable, 0:Disable
-        dds_low_command.motor_cmd().at(i).tau() = cmd->motorCmd[i].tau;
-        dds_low_command.motor_cmd().at(i).q() = cmd->motorCmd[i].q;
-        dds_low_command.motor_cmd().at(i).dq() = cmd->motorCmd[i].dq;
-        dds_low_command.motor_cmd().at(i).kp() = cmd->motorCmd[i].Kp;
-        dds_low_command.motor_cmd().at(i).kd() = cmd->motorCmd[i].Kd;
-        // std::cout<<"des_q: "<<dds_low_command.motor_cmd().at(i).q()<<std::endl;
-    }
-
-    dds_low_command.crc() = crc32_core((uint32_t *)&dds_low_command, (sizeof(dds_low_command) >> 2) - 1);
-    bool wrt = lowcmd_publisher_->Write(dds_low_command);
-
-    for (int i = 0; i < G1_NUM_MOTOR; i++)
-    {
-        state->motorState[i].q = _lowState.motorState[i].q;
-        state->motorState[i].dq = _lowState.motorState[i].dq;
-    }
-    for (int i = 0; i < 3; i++)
-    {
-        state->imu.quaternion[i] = _lowState.imu.quaternion[i];
-        state->imu.accelerometer[i] = _lowState.imu.accelerometer[i];
-        state->imu.gyroscope[i] = _lowState.imu.gyroscope[i];
-    }
-    state->imu.quaternion[3] = _lowState.imu.quaternion[3];
-
-    state->userCmd = userCmd_;
-    state->userValue = userValue_;
+IOSDK::~IOSDK() {
+  stopping_=true;
+  if(publisherThread_.joinable()) publisherThread_.join();
+  if(subscriber_) subscriber_->CloseChannel();
+  subscriber_.reset();
+  publisher_.reset();
 }
-
-void IOSDK::LowStateHandler(const void *message)
-{
-    LowState_ low_state = *(const LowState_ *)message;
-    if (low_state.crc() != crc32_core((uint32_t *)&low_state, (sizeof(LowState_) >> 2) - 1))
+void IOSDK::receive(LowlevelState* state) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  *state=state_;
+  state_.userCmd=UserCommand::NONE; // events consumed once, not sticky commands
+}
+void IOSDK::send(const LowlevelCmd* cmd) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  command_=*cmd;
+  commandAt_=std::chrono::steady_clock::now();
+  haveCommand_=true;
+}
+bool IOSDK::watchdogFault() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return watchdogLatched_;
+}
+void IOSDK::resetWatchdog() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if(!state_.received || std::chrono::steady_clock::now()-state_.receivedAt>std::chrono::milliseconds(100)) return;
+  // Recovery cannot replay an old active command.
+  command_=LowlevelCmd{};
+  for(std::size_t i=0;i<g1::kMotorCount;++i) if(activeMotor(i)) command_.motorCmd[i].Kd=3.f;
+  commandAt_=std::chrono::steady_clock::now();
+  haveCommand_=true;
+  watchdogLatched_=false;
+}
+void IOSDK::publishLoop() {
+  using Clock=std::chrono::steady_clock;
+  while(!stopping_) {
+    LowCmd_ message{};
+    bool publish=false;
     {
-        std::cout << "[ERROR] CRC Error" << std::endl;
-        return;
+      std::lock_guard<std::mutex> lock(mutex_);
+      const auto now=Clock::now();
+      publish=state_.received;
+      if(publish) {
+        if(now-state_.receivedAt>std::chrono::milliseconds(100) ||
+           (haveCommand_ && now-commandAt_>std::chrono::milliseconds(100))) watchdogLatched_=true;
+        bool damping=watchdogLatched_ || !haveCommand_;
+        for(std::size_t i=0;i<g1::kMotorCount;++i) if(activeMotor(i)) {
+          const auto& c=command_.motorCmd[i];
+          if(!std::isfinite(c.q)||!std::isfinite(c.dq)||!std::isfinite(c.tau)||
+             !std::isfinite(c.Kp)||!std::isfinite(c.Kd)||c.Kp<0||c.Kd<0) {
+            watchdogLatched_=true; damping=true;
+          }
+        }
+        message.mode_pr()=0;
+        message.mode_machine()=modeMachine_;
+        for(std::size_t i=0;i<g1::kMotorCount;++i) {
+          auto& out=message.motor_cmd().at(i);
+          if(!activeMotor(i)) {out.mode()=0; continue;}
+          out.mode()=1;
+          const auto& c=command_.motorCmd[i];
+          out.q()=damping?0:c.q; out.dq()=damping?0:c.dq;
+          out.tau()=damping?0:c.tau; out.kp()=damping?0:c.Kp;
+          out.kd()=damping?3.f:c.Kd;
+        }
+      }
     }
-
-    // get motor state
-    for (int i = 0; i < G1_NUM_MOTOR; ++i)
-    {
-        _lowState.motorState[i].q = low_state.motor_state()[i].q();
-        _lowState.motorState[i].dq = low_state.motor_state()[i].dq();
+    if(publish) {
+      message.crc()=crc32_core(reinterpret_cast<uint32_t*>(&message),(sizeof(message)>>2)-1);
+      try {
+        if(!publisher_->Write(message)) {std::lock_guard<std::mutex> lock(mutex_);watchdogLatched_=true;}
+      } catch(...) {std::lock_guard<std::mutex> lock(mutex_);watchdogLatched_=true;}
     }
-    
-    // get imu state
-    _lowState.imu.gyroscope[0] = low_state.imu_state().gyroscope()[0];
-    _lowState.imu.gyroscope[1] = low_state.imu_state().gyroscope()[1];
-    _lowState.imu.gyroscope[2] = low_state.imu_state().gyroscope()[2];
-
-    _lowState.imu.quaternion[0] = low_state.imu_state().quaternion()[0];
-    _lowState.imu.quaternion[1] = low_state.imu_state().quaternion()[1];
-    _lowState.imu.quaternion[2] = low_state.imu_state().quaternion()[2];
-    _lowState.imu.quaternion[3] = low_state.imu_state().quaternion()[3];
-
-    _lowState.imu.accelerometer[0] = low_state.imu_state().accelerometer()[0];
-    _lowState.imu.accelerometer[1] = low_state.imu_state().accelerometer()[1];
-    _lowState.imu.accelerometer[2] = low_state.imu_state().accelerometer()[2];
-
-    // update gamepad
-    memcpy(rx_.buff, &low_state.wireless_remote()[0], 40);
-    gamepad_.update(rx_.RF_RX);
-
-    // update mode machine
-    if (mode_machine_ != low_state.mode_machine())
-    {
-        if (mode_machine_ == 0)
-            std::cout << "G1 type: " << unsigned(low_state.mode_machine()) << std::endl;
-        mode_machine_ = low_state.mode_machine();
-    }
-
-    if(gamepad_.start.pressed)
-    {
-        userCmd_ = UserCommand::START;          
-    }
-    if(gamepad_.select.pressed)
-    {
-        userCmd_ = UserCommand::SELECT; 
-    }
-
-    if(gamepad_.R2.pressed)
-    {
-        userCmd_ = UserCommand::R2;
-    }
-    if (gamepad_.L2.pressed)
-    {
-        userCmd_ = UserCommand::L2;
-    }
-    if(gamepad_.R1.pressed)
-    {
-        userCmd_ = UserCommand::R1;
-    }
-    if (gamepad_.R2.pressed && gamepad_.A.pressed)
-    {
-        userCmd_ = UserCommand::R2_A;
-    }
-    if (gamepad_.L2.pressed && gamepad_.B.pressed)
-    {
-        userCmd_ = UserCommand::L2_B;
-    }
-    if (gamepad_.R1.pressed && gamepad_.up.pressed)
-    {
-        userCmd_ = UserCommand::R1_UP;
-    }
-    if (gamepad_.R1.pressed && gamepad_.left.pressed)
-    {
-        userCmd_ = UserCommand::R1_LEFT;
-    }
-    if (gamepad_.R1.pressed && gamepad_.right.pressed)
-    {
-        userCmd_ = UserCommand::R1_RIGHT;
-    }
-    if (gamepad_.R2.pressed && gamepad_.up.pressed)
-    {
-        userCmd_ = UserCommand::R2_UP;
-    }
-    if (gamepad_.R2.pressed && gamepad_.down.pressed)
-    {
-        userCmd_ = UserCommand::R2_DOWN;
-    }
-    if (gamepad_.R2.pressed && gamepad_.B.pressed)
-    {
-        userCmd_ = UserCommand::R2_B;
-    }
-
-    userValue_.lx = -gamepad_.lx;
-    userValue_.ly = gamepad_.ly;
-    userValue_.rx = -gamepad_.rx;
-    userValue_.ry = gamepad_.ry;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+}
+void IOSDK::LowStateHandler(const void* message) {
+  LowState_ raw=*static_cast<const LowState_*>(message);
+  if(raw.crc()!=crc32_core(reinterpret_cast<uint32_t*>(&raw),(sizeof(raw)>>2)-1)) return;
+  std::lock_guard<std::mutex> lock(mutex_);
+  if(state_.received && raw.tick()==lastTick_) return; // repeated frames do not renew freshness
+  if(state_.received && modeMachine_!=raw.mode_machine()) watchdogLatched_=true;
+  lastTick_=raw.tick(); modeMachine_=raw.mode_machine();
+  for(std::size_t i=0;i<g1::kMotorCount;++i) {
+    state_.motorState[i].q=raw.motor_state()[i].q();
+    state_.motorState[i].dq=raw.motor_state()[i].dq();
+  }
+  for(int i=0;i<4;++i) state_.imu.quaternion[i]=raw.imu_state().quaternion()[i];
+  for(int i=0;i<3;++i) {
+    state_.imu.gyroscope[i]=raw.imu_state().gyroscope()[i];
+    state_.imu.accelerometer[i]=raw.imu_state().accelerometer()[i];
+  }
+  std::memcpy(rx_.buff,&raw.wireless_remote()[0],40);
+  gamepad_.update(rx_.RF_RX);
+  UserCommand cmd=UserCommand::NONE;
+  if(gamepad_.start.pressed) cmd=UserCommand::START;
+  if(gamepad_.R2.pressed && gamepad_.A.pressed) cmd=UserCommand::R2_A;
+  if(!use23_) {
+    if(gamepad_.R1.pressed) cmd=UserCommand::R1;
+    if(gamepad_.R2.pressed) cmd=UserCommand::R2;
+    if(gamepad_.L2.pressed) cmd=UserCommand::L2;
+    if(gamepad_.R2.pressed && gamepad_.A.pressed) cmd=UserCommand::R2_A;
+    if(gamepad_.R2.pressed && gamepad_.B.pressed) cmd=UserCommand::R2_B;
+    if(gamepad_.R2.pressed && gamepad_.up.pressed) cmd=UserCommand::R2_UP;
+    if(gamepad_.R2.pressed && gamepad_.down.pressed) cmd=UserCommand::R2_DOWN;
+    if(gamepad_.R1.pressed && gamepad_.up.pressed) cmd=UserCommand::R1_UP;
+    if(gamepad_.R1.pressed && gamepad_.left.pressed) cmd=UserCommand::R1_LEFT;
+    if(gamepad_.R1.pressed && gamepad_.right.pressed) cmd=UserCommand::R1_RIGHT;
+  }
+  // Stop commands have priority and also gate the independent publisher.
+  if(gamepad_.L2.pressed && gamepad_.B.pressed) cmd=UserCommand::L2_B;
+  if(gamepad_.select.pressed) cmd=UserCommand::SELECT;
+  if(cmd==UserCommand::SELECT || cmd==UserCommand::L2_B) watchdogLatched_=true;
+  if(cmd!=heldCommand_ && cmd!=UserCommand::NONE) {
+    if(state_.userCmd!=UserCommand::SELECT && state_.userCmd!=UserCommand::L2_B)
+      state_.userCmd=cmd;
+    if(cmd==UserCommand::SELECT) state_.userCmd=cmd;
+  }
+  heldCommand_=cmd;
+  state_.userValue.lx=-gamepad_.lx; state_.userValue.ly=gamepad_.ly;
+  state_.userValue.rx=-gamepad_.rx; state_.userValue.ry=gamepad_.ry;
+  state_.received=true; state_.receivedAt=std::chrono::steady_clock::now(); ++state_.sequence;
 }

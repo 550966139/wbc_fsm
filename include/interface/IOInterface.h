@@ -9,13 +9,17 @@
 class IOInterface{
 public:
 IOInterface(){}
-~IOInterface(){delete cmdPanel;}
+virtual ~IOInterface(){delete cmdPanel;}
+virtual void receive(LowlevelState *state) = 0;
+virtual void send(const LowlevelCmd *cmd) = 0;
+virtual bool watchdogFault() const { return false; }
+virtual void resetWatchdog() {}
 virtual void sendRecv(const LowlevelCmd *cmd, LowlevelState *state) = 0;
 void zeroCmdPanel(){cmdPanel->setZero();}
 void setPassive(){cmdPanel->setPassive();}
 
 protected:
-CmdPanel *cmdPanel;
+CmdPanel *cmdPanel = nullptr;
 };
 
 #endif  //IOINTERFACE_H

@@ -15,9 +15,17 @@ constexpr std::array<int, kPolicyDof> kPolicyToMotor = {
 constexpr bool validPolicyMapping() {
     for (int i : kPolicyToMotor)
         if (i < 0 || i >= static_cast<int>(kMotorCount)) return false;
+    for (std::size_t i = 0; i < kPolicyDof; ++i)
+        for (std::size_t j = i + 1; j < kPolicyDof; ++j)
+            if (kPolicyToMotor[i] == kPolicyToMotor[j]) return false;
     return true;
 }
 static_assert(validPolicyMapping(), "invalid G1-23DoF motor mapping");
+
+constexpr bool isPolicyMotor(std::size_t slot) {
+    for (int motor : kPolicyToMotor) if (static_cast<std::size_t>(motor) == slot) return true;
+    return false;
+}
 
 template <typename T>
 std::array<T, kPolicyDof> selectPolicyJoints(const std::array<T, kMotorCount>& motors) {
