@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 project(g1_onnx_rl)
+include(CTest)
 
 set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_CXX_STANDARD 17)
@@ -46,3 +47,9 @@ target_link_libraries(wbc_fsm PRIVATE
     Eigen3::Eigen
     ${Boost_LIBRARIES}
 )
+
+if(BUILD_TESTING)
+    add_executable(g1_policy23_test tests/policy23_test.cpp)
+    target_include_directories(g1_policy23_test PRIVATE include)
+    add_test(NAME g1_policy23_contract COMMAND g1_policy23_test)
+endif()

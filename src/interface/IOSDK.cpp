@@ -62,7 +62,6 @@ IOSDK::IOSDK(bool use23) : use23_(use23) {
 IOSDK::~IOSDK() {
   stopping_=true;
   if(publisherThread_.joinable()) publisherThread_.join();
-  if(subscriber_) subscriber_->CloseChannel();
   subscriber_.reset();
   publisher_.reset();
 }
