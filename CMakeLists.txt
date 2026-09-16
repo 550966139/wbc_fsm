@@ -51,5 +51,6 @@ target_link_libraries(wbc_fsm PRIVATE
 if(BUILD_TESTING)
     add_executable(g1_policy23_test tests/policy23_test.cpp)
     target_include_directories(g1_policy23_test PRIVATE include)
+    target_compile_definitions(g1_policy23_test PRIVATE PROJECT_ROOT_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME g1_policy23_contract COMMAND g1_policy23_test)
 endif()

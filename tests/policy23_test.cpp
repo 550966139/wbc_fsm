@@ -2,9 +2,10 @@
 #include "control/config23.h"
 #include <cassert>
 #include <cmath>
+#include <string>
 
 int main() {
-  const auto cfg = g1::Config23::load("config/g1_23dof.json");
+  const auto cfg = g1::Config23::load(std::string(PROJECT_ROOT_DIR) + "/config/g1_23dof.json");
   g1::Joints23 q = cfg.defaults, dq{}, last{};
   std::array<float, 3> gyro{}, gravity{0.f, 0.f, -1.f}, command{.2f, 0.f, 0.f};
   float phase = 0.f;
