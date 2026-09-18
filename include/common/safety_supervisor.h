@@ -21,38 +21,53 @@ class SafetySupervisor {
 public:
   explicit SafetySupervisor(SafetyLimits limits = {}) : limits_(limits) {}
   void trip(const std::string &reason) {
-    if (!latched_) reason_ = reason;
+    if (!latched_)
+      reason_ = reason;
     latched_ = true;
     recoverySince_ = {};
   }
-  bool checkState(bool received, SafetyClock::time_point stamp,
-                  const std::array<float, 3> &gravity,
+  bool checkState(bool received, SafetyClock::time_point stamp, const std::array<float, 3> &gravity,
                   SafetyClock::time_point now = SafetyClock::now()) {
+    if (lastCheckAt_ != SafetyClock::time_point{} &&
+        (now < lastCheckAt_ || now - lastCheckAt_ > limits_.stateTimeout)) {
+      recoverySince_ = {};
+      tiltSince_ = {};
+    }
+    lastCheckAt_ = now;
+    lastCheckValid_ = false;
     if (!received || stamp > now || now - stamp > limits_.stateTimeout) {
       trip("LowState missing or stale");
       return false;
     }
     float norm = 0;
-    for (float v : gravity) norm += v * v;
+    for (float v : gravity)
+      norm += v * v;
     if (!std::isfinite(norm) || std::abs(norm - 1.f) > 0.05f) {
       trip("invalid IMU gravity");
       return false;
     }
+    lastCheckValid_ = true;
+    lastStateAt_ = stamp;
     const float error = std::abs(gravity[2] + 1.f);
     if (error > limits_.projectedGravityThreshold) {
       recoverySince_ = {};
-      if (tiltSince_ == SafetyClock::time_point{}) tiltSince_ = now;
-      if (now - tiltSince_ >= limits_.tiltConfirmation) trip("excessive tilt");
+      if (tiltSince_ == SafetyClock::time_point{})
+        tiltSince_ = now;
+      if (now - tiltSince_ >= limits_.tiltConfirmation)
+        trip("excessive tilt");
     } else {
       tiltSince_ = {};
       if (error <= limits_.recoveryGravityThreshold) {
-        if (recoverySince_ == SafetyClock::time_point{}) recoverySince_ = now;
-      } else recoverySince_ = {};
+        if (recoverySince_ == SafetyClock::time_point{})
+          recoverySince_ = now;
+      } else
+        recoverySince_ = {};
     }
     return !latched_;
   }
   bool recover(bool newStartPress, SafetyClock::time_point now = SafetyClock::now()) {
-    if (newStartPress && recoverySince_ != SafetyClock::time_point{} &&
+    if (newStartPress && lastCheckValid_ && lastStateAt_ <= now &&
+        now - lastStateAt_ <= limits_.stateTimeout && recoverySince_ != SafetyClock::time_point{} &&
         now - recoverySince_ >= limits_.recoveryDuration) {
       latched_ = false;
       reason_.clear();
@@ -62,10 +77,13 @@ public:
   bool latched() const { return latched_; }
   const std::string &reason() const { return reason_; }
   const SafetyLimits &limits() const { return limits_; }
+
 private:
   SafetyLimits limits_;
   bool latched_ = false;
   std::string reason_;
   SafetyClock::time_point tiltSince_{}, recoverySince_{};
+  SafetyClock::time_point lastStateAt_{}, lastCheckAt_{};
+  bool lastCheckValid_ = false;
 };
-}
+} // namespace control
