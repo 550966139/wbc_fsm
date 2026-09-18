@@ -1,3 +1,11 @@
+# Current branch: G1 23DoF port
+
+The current executable supports 23DoF damping, stand and velocity policy control. Read the [23DoF build/deployment guide](docs/g1-23dof-port.md) and [implementation status](docs/IMPLEMENTATION_STATUS.md) first. The default command only performs offline preflight; DDS requires explicit `--run`. Bundled policies output 29 joints. A matching trained 23DoF policy is still required.
+
+**The upstream 29DoF reference below is retained for context. Its models, scenes and launch commands are not the deployment instructions for this branch.**
+
+---
+
 # WBC_Deploy Controller
 
 Whole-Body Control deployment system for humanoid robots using reinforcement learning and motion tracking.
