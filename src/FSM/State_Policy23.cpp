@@ -69,17 +69,10 @@ void State_Policy23::enter() {
 void State_Policy23::run() {
   const auto &config = _ctrlComp->config23.value();
   const auto &user = _lowState->userValue;
-  // Command is [vx, vy, wyaw, pitch]. Policy pitch is nose-up positive; the
-  // right stick's up-push (ry positive, matching ly) leans the robot forward,
-  // hence the negation.
-  std::array<float, 4> command{user.ly, user.lx, user.rx, -user.ry};
-  for (std::size_t i = 0; i < command.size(); ++i) {
-    if (!std::isfinite(command[i]))
-      throw std::runtime_error("non-finite velocity command");
-    command[i] = std::abs(command[i]) < .1f
-                     ? 0.f
-                     : std::clamp(command[i], -1.f, 1.f) * config.commandLimit[i];
-  }
+  // Both vertical stick axes command forward/backward; lateral and yaw are
+  // unchanged. The pitch dimension is held at zero, see commandFromSticks23.
+  const auto command =
+      g1::commandFromSticks23(user.ly, user.lx, user.rx, user.ry, config.commandLimit);
   const auto &gyro = _lowState->imu.gyroscope;
   auto observation =
       g1::observation23({gyro[0], gyro[1], gyro[2]}, _ctrlComp->getGravity(), command,

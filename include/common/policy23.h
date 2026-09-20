@@ -18,6 +18,22 @@ inline std::array<float, 3> gravityFromQuaternion(const std::array<float, 4> &q)
   const float w = q[0] * s, x = q[1] * s, y = q[2] * s, z = q[3] * s;
   return {2.f * (w * y - x * z), -2.f * (y * z + w * x), 2.f * (x * x + y * y) - 1.f};
 }
+// Stick-to-command mapping (deployment layout, 2026-09-20 revision): both
+// vertical stick axes (ly, ry) command forward/backward, lx is lateral, rx is
+// yaw. Pitch is retired from the gamepad; the v1 contract keeps its 4th
+// command dimension, held at zero, which stays in-distribution because
+// training sampled pitch symmetrically around zero. Per-dimension 0.1
+// deadzone, clamp to [-1, 1], then scale by the configured command limit.
+inline std::array<float, 4> commandFromSticks23(float ly, float lx, float rx, float ry,
+                                                const std::array<float, 4> &limits) {
+  std::array<float, 4> command{ly + ry, lx, rx, 0.f};
+  for (std::size_t i = 0; i < command.size(); ++i) {
+    if (!std::isfinite(command[i]))
+      throw std::runtime_error("non-finite velocity command");
+    command[i] = std::abs(command[i]) < .1f ? 0.f : std::clamp(command[i], -1.f, 1.f) * limits[i];
+  }
+  return command;
+}
 // Official velocity-v1 concatenation (lateral+pitch retrain): the command is
 // 4-dimensional [vx, vy, wyaw, pitch]. Phase advances even when command is
 // zero; sin/cos are masked when the 4-D command norm is below 0.1.

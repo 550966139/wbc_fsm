@@ -120,6 +120,16 @@ Session log `wbc_20260920_151250.log`: L1+X launch → START stand → **R2+A en
 - **PC2 delivery of the recalibration was interrupted**: the host became unreachable (`No route to host`) right after the operator session ended — same pattern as 2026-09-18. Pending for the next PC2 contact: push `include/common/policy23.h` + `config/g1_23dof.json`, `cmake --build build`, `cd build && ctest`, `--check`. Until then PC2 runs v1 with the 1.2 guard — usable (the session completed; latch recovers via START×2) but expect occasional transient trips under pitch commands. The running controller must be restarted (SELECT → L1+X) to pick up the new config/binary.
 - **Recalibration delivered (2026-09-21, G1 re-powered)**: both files pushed, aarch64 rebuild, ctest **5/5**, `--check` PASS, `release_ai.sh` RELEASED (ai auto-restores on every robot boot), guard service active, controller left unstarted for the operator (previous process died with the power-off, no SELECT needed). PC2 now runs v1 with `max_tracking_error` 1.5 and joint-detailed guard messages. Next attended session should repeat the light-push test: expect policy push-recovery instead of a tracking latch; if it still latches, the log now names the joint and values.
 
+## Stick layout revision: pitch retired (2026-09-20, later)
+
+Operator feedback after the v1 hardware sessions: the right stick's vertical axis should command forward/backward **motion** (it was mapped to lean), and the pitch capability is not needed on the gamepad at all.
+
+- **Mapping change (deployment-side only, model unchanged)**: new pure helper `g1::commandFromSticks23(ly, lx, rx, ry, limits)` in `policy23.h` builds the command as `{ly+ry, lx, rx, 0}` — both vertical stick axes sum into vx (left stick keeps its existing role, right stick up = forward; the sum saturates at the vx limit), lx stays lateral, rx stays yaw. The 0.1 deadzone / ±1 clamp / `deployment_command_limits` scaling logic is unchanged and moved into the helper; `State_Policy23::run` just calls it.
+- **Pitch dimension held at zero**: the v1 contract keeps its 4 command dims and 81-obs layout; dim 3 is fed a constant 0 — in-distribution for the policy because training sampled pitch symmetrically around 0. No retrain, no model change; `deployment_command_limits` stays `[0.3, 0.3, 0.4, 0.25]` (dim 3 unused).
+- **Tests**: `policy23_test.cpp` gained direct stick-mapping coverage (per-axis direction, both-stick sum with saturation at the vx limit, deadzone, cancellation, pitch dim constant zero, non-finite rejection) — the `run()` stick path previously had none. Local ctest 4/4; `run-port-tests.sh` clean.
+- **Sim2Sim**: W/S (ly) semantics unchanged; the simulator's I/K keys (ry) would now also drive forward/backward, so the I/K patch is retired from the simulator keymap (see SIM2SIM_HANDOFF.md).
+- Same feedback round also reported standing/walking swaying under light external pushes — push-robustness retraining campaign opened (recorded in its own section below).
+
 
 ## PC2 deployment prep (2026-09-18, host 10.10.16.184:15389)
 

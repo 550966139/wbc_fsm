@@ -38,6 +38,34 @@ int main() {
                "unnormalized IMU rejected");
   suite.throws([&] { g1::gravityFromQuaternion({nan, 0.f, 0.f, 0.f}); }, "NaN IMU rejected");
 
+  {
+    const std::array<float, 4> limits{.3f, .3f, .4f, .25f};
+    suite.check(g1::commandFromSticks23(0.f, 0.f, 0.f, 0.f, limits) == std::array<float, 4>{},
+                "centered sticks give zero command");
+    suite.near(g1::commandFromSticks23(1.f, 0.f, 0.f, 0.f, limits)[0], .3f,
+               "left stick up commands forward velocity");
+    suite.near(g1::commandFromSticks23(0.f, 0.f, 0.f, 1.f, limits)[0], .3f,
+               "right stick up commands forward velocity");
+    suite.near(g1::commandFromSticks23(-.5f, 0.f, 0.f, -.5f, limits)[0], -.3f,
+               "backward stick sum clamps to the vx limit");
+    suite.near(g1::commandFromSticks23(.6f, 0.f, 0.f, .6f, limits)[0], .3f,
+               "forward stick sum saturates at the vx limit");
+    suite.near(g1::commandFromSticks23(0.f, 1.f, 0.f, 0.f, limits)[1], .3f,
+               "left stick right commands lateral velocity");
+    suite.near(g1::commandFromSticks23(0.f, 0.f, 1.f, 0.f, limits)[2], .4f,
+               "right stick right commands yaw rate");
+    suite.near(g1::commandFromSticks23(0.f, 0.f, 0.f, 1.f, limits)[3], 0.f,
+               "pitch dimension stays zero for any stick input");
+    suite.check(g1::commandFromSticks23(.05f, .09f, .05f, 0.f, limits) == std::array<float, 4>{},
+                "below-deadzone sticks give zero command");
+    suite.near(g1::commandFromSticks23(.5f, 0.f, 0.f, -.5f, limits)[0], 0.f,
+               "opposed vertical sticks cancel to zero");
+    suite.throws([&] { g1::commandFromSticks23(nan, 0.f, 0.f, 0.f, limits); },
+                 "NaN stick input rejected");
+    suite.throws([&] { g1::commandFromSticks23(0.f, inf, 0.f, 0.f, limits); },
+                 "infinite stick input rejected");
+  }
+
   g1::Joints23 defaults{}, q{}, dq{}, last{}, scale{};
   for (std::size_t i = 0; i < g1::kPolicyDof; ++i) {
     defaults[i] = static_cast<float>(i) * .01f;
