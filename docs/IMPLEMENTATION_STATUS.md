@@ -130,6 +130,15 @@ Operator feedback after the v1 hardware sessions: the right stick's vertical axi
 - **Sim2Sim**: W/S (ly) semantics unchanged; the simulator's I/K keys (ry) would now also drive forward/backward, so the I/K patch is retired from the simulator keymap (see SIM2SIM_HANDOFF.md).
 - Same feedback round also reported standing/walking swaying under light external pushes — push-robustness retraining campaign opened (recorded in its own section below).
 
+## Push-robustness retrain (2026-09-20, launched 17:14 on 224)
+
+The v1 policy was trained with the stock push event (`push_by_setting_velocity`, an **additive** velocity kick: x/y ±0.5 m/s, roll/pitch ±0.52 rad/s, yaw ±0.78, every 5–6 s) — too gentle for the observed hardware sway under light hand pushes.
+
+- **Training change (224, repo `src/tasks/velocity/config/g1_23dof/`)**: the flat env cfg strengthens the push event in training mode only (play mode keeps it disabled): x/y ±1.0 m/s, z ±0.4, roll/pitch ±0.6, yaw ±0.9, interval 3–4 s. Seed 20260921; everything else identical to the v1 run — the 81-obs pitch contract is unchanged (dim 3 still trained; deployment feeds it 0). Backups + archive in `/tmp/sim2sim_patch/push_retrain/`.
+- **Launch**: `python scripts/train.py Unitree-G1-23Dof-Flat --env.scene.num-envs=4096 --agent.logger tensorboard`; log `/tmp/train_push_20260920_171500.log`, run dir `logs/rsl_rl/g1_23dof_velocity/2026-09-20_17-14-55`. Trap recorded: mjlab's runner cfg defaults `logger=wandb` and installed wandb 0.30.0 + pydantic 2.13 crashes on `wandb.Settings(start_method=...)` — always pass `--agent.logger tensorboard` explicitly.
+- **Early metrics vs v1** (harder task, slower start expected): iter 230 episode length 648 / mean reward −7.3 / termination −0.127, vs v1 iter 200 at 941 / 18.9 / −0.026. Uptrend to be confirmed around iteration 1000.
+- **Remaining after completion**: checkpoint selection (`/tmp/select_checkpoint.py`) → export (`/tmp/export_from_ckpt.py`, obs_dim=81) → sim2sim acceptance including a NEW scripted push-impulse test (inject a short torso force in sim; pass = recovers without falling) → recalibrate `max_target_step`/`max_tracking_error` from the new action envelope → PC2 attended model swap (v1 kept as rollback).
+
 
 ## PC2 deployment prep (2026-09-18, host 10.10.16.184:15389)
 
