@@ -18,7 +18,7 @@ State_Policy23::State_Policy23(CtrlComponents *components)
   const auto &config = components->config23.value();
   if (!std::filesystem::is_regular_file(config.model))
     throw std::runtime_error("23DoF policy missing: " + config.model.string() +
-                             "; provide a matching trained 80-input / 23-output model");
+                             "; provide a matching trained 81-input / 23-output model");
   options_.SetIntraOpNumThreads(1);
   options_.SetInterOpNumThreads(1);
   options_.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
@@ -26,7 +26,7 @@ State_Policy23::State_Policy23(CtrlComponents *components)
   session_ = std::make_unique<Ort::Session>(env_, config.model.c_str(), options_);
   if (session_->GetInputCount() != 1 || session_->GetOutputCount() != 1)
     throw std::runtime_error("23DoF policy must have one observation input and one action output");
-  requireShape(session_->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo(), 80, "input");
+  requireShape(session_->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo(), 81, "input");
   requireShape(session_->GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo(), 23, "output");
   Ort::AllocatorWithDefaultOptions allocator;
   inputName_ = session_->GetInputNameAllocated(0, allocator).get();
@@ -40,7 +40,7 @@ State_Policy23::State_Policy23(CtrlComponents *components)
 }
 
 g1::Joints23 State_Policy23::infer(g1::Observation23 &observation) {
-  const std::array<int64_t, 2> shape{1, 80};
+  const std::array<int64_t, 2> shape{1, 81};
   const auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
   auto input = Ort::Value::CreateTensor<float>(memory, observation.data(), observation.size(),
                                                shape.data(), shape.size());
@@ -69,7 +69,10 @@ void State_Policy23::enter() {
 void State_Policy23::run() {
   const auto &config = _ctrlComp->config23.value();
   const auto &user = _lowState->userValue;
-  std::array<float, 3> command{user.ly, user.lx, user.rx};
+  // Command is [vx, vy, wyaw, pitch]. Policy pitch is nose-up positive; the
+  // right stick's up-push (ry positive, matching ly) leans the robot forward,
+  // hence the negation.
+  std::array<float, 4> command{user.ly, user.lx, user.rx, -user.ry};
   for (std::size_t i = 0; i < command.size(); ++i) {
     if (!std::isfinite(command[i]))
       throw std::runtime_error("non-finite velocity command");
@@ -83,9 +86,8 @@ void State_Policy23::run() {
                         _ctrlComp->positions23(), _ctrlComp->velocities23(), config.defaults,
                         lastAction_, phase_, config.dt, config.gaitPeriod);
   const auto actions = infer(observation);
-  _ctrlComp->setTargets23(g1::clampTargets23(g1::actionTargets23(actions, config.scale,
-                                                                 config.defaults),
-                                             config.lower, config.upper));
+  _ctrlComp->setTargets23(g1::clampTargets23(
+      g1::actionTargets23(actions, config.scale, config.defaults), config.lower, config.upper));
   lastAction_ = actions;
 }
 

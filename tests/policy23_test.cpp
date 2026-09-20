@@ -46,35 +46,44 @@ int main() {
     last[i] = static_cast<float>(i) * -.04f;
     scale[i] = .25f + static_cast<float>(i) * .01f;
   }
-  const std::array<float, 3> gyro{.1f, .2f, .3f}, command{.2f, -.1f, .3f};
+  const std::array<float, 3> gyro{.1f, .2f, .3f};
+  const std::array<float, 4> command{.2f, -.1f, .3f, -.15f};
   float phase = .99f;
   const auto obs =
       g1::observation23(gyro, upright, command, q, dq, defaults, last, phase, .02f, .6f);
-  suite.check(obs.size() == 80, "policy observation contains exactly 80 scalars");
+  suite.check(obs.size() == 81, "policy observation contains exactly 81 scalars");
   suite.near(phase, .99f + .02f / .6f - 1.f, "phase wraps after one period");
   for (std::size_t i = 0; i < 3; ++i) {
     suite.near(obs[i], gyro[i], "observation angular velocity order");
     suite.near(obs[3 + i], upright[i], "observation projected gravity order");
-    suite.near(obs[6 + i], command[i], "observation velocity command order");
   }
-  suite.near(obs[9], std::sin(phase * 6.28318530718f), "gait sine position");
-  suite.near(obs[10], std::cos(phase * 6.28318530718f), "gait cosine position");
+  for (std::size_t i = 0; i < 4; ++i)
+    suite.near(obs[6 + i], command[i], "observation command order including pitch");
+  suite.near(obs[10], std::sin(phase * 6.28318530718f), "gait sine position");
+  suite.near(obs[11], std::cos(phase * 6.28318530718f), "gait cosine position");
   for (std::size_t i = 0; i < g1::kPolicyDof; ++i) {
-    suite.near(obs[11 + i], q[i] - defaults[i], "relative joint positions in observation");
-    suite.near(obs[34 + i], dq[i], "joint velocities in observation");
-    suite.near(obs[57 + i], last[i], "previous actions in observation");
+    suite.near(obs[12 + i], q[i] - defaults[i], "relative joint positions in observation");
+    suite.near(obs[35 + i], dq[i], "joint velocities in observation");
+    suite.near(obs[58 + i], last[i], "previous actions in observation");
   }
   const float oldPhase = phase;
   auto masked = g1::observation23(gyro, upright, {}, q, dq, defaults, last, phase, .02f, .6f);
-  suite.near(masked[9], 0.f, "zero command masks gait sine");
-  suite.near(masked[10], 0.f, "zero command masks gait cosine");
+  suite.near(masked[10], 0.f, "zero command masks gait sine");
+  suite.near(masked[11], 0.f, "zero command masks gait cosine");
   suite.near(phase, oldPhase + .02f / .6f, "masked gait still advances its phase");
-  masked =
-      g1::observation23(gyro, upright, {.099f, 0.f, 0.f}, q, dq, defaults, last, phase, .02f, .6f);
-  suite.near(masked[9], 0.f, "below-threshold command masks phase");
-  const auto active =
-      g1::observation23(gyro, upright, {.1f, 0.f, 0.f}, q, dq, defaults, last, phase, .02f, .6f);
-  suite.check(std::abs(active[9]) + std::abs(active[10]) > .1f, "threshold command enables phase");
+  masked = g1::observation23(gyro, upright, {.099f, 0.f, 0.f, 0.f}, q, dq, defaults, last, phase,
+                             .02f, .6f);
+  suite.near(masked[10], 0.f, "below-threshold command masks phase");
+  masked = g1::observation23(gyro, upright, {0.f, 0.f, 0.f, .099f}, q, dq, defaults, last, phase,
+                             .02f, .6f);
+  suite.near(masked[10], 0.f, "pitch-only below-threshold command masks phase");
+  const auto active = g1::observation23(gyro, upright, {.1f, 0.f, 0.f, 0.f}, q, dq, defaults, last,
+                                        phase, .02f, .6f);
+  suite.check(std::abs(active[10]) + std::abs(active[11]) > .1f, "threshold command enables phase");
+  const auto pitchActive = g1::observation23(gyro, upright, {0.f, 0.f, 0.f, .1f}, q, dq, defaults,
+                                             last, phase, .02f, .6f);
+  suite.check(std::abs(pitchActive[10]) + std::abs(pitchActive[11]) > .1f,
+              "pitch-only threshold command enables phase");
   for (float invalid : {0.f, -.02f, nan, inf}) {
     suite.throws(
         [&] { g1::observation23(gyro, upright, {}, q, dq, defaults, last, phase, invalid, .6f); },
@@ -116,11 +125,9 @@ int main() {
     hi.fill(1.f);
     auto saturated = targets;
     saturated[22] = 4.f;
-    suite.near(g1::clampTargets23(saturated, lo, hi)[22], 1.f,
-               "target above upper limit clamped");
+    suite.near(g1::clampTargets23(saturated, lo, hi)[22], 1.f, "target above upper limit clamped");
     saturated[22] = -4.f;
-    suite.near(g1::clampTargets23(saturated, lo, hi)[22], -1.f,
-               "target below lower limit clamped");
+    suite.near(g1::clampTargets23(saturated, lo, hi)[22], -1.f, "target below lower limit clamped");
     saturated[22] = targets[22];
     const auto passthrough = g1::clampTargets23(saturated, lo, hi);
     suite.near(passthrough[22], targets[22], "in-range target passes through clamping");

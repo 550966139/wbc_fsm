@@ -77,8 +77,7 @@ int main() {
   reject("excessive stand damping rejected", [](auto &j) { j["stand_damping"][0] = 31; });
   reject("half-specified stand gains rejected", [](auto &j) { j.erase("stand_damping"); });
   reject("short stand feedforward rejected", [](auto &j) { j["stand_gravity_ff"].erase(22); });
-  reject("excessive stand feedforward rejected",
-         [](auto &j) { j["stand_gravity_ff"][0] = 89; });
+  reject("excessive stand feedforward rejected", [](auto &j) { j["stand_gravity_ff"][0] = 89; });
   {
     auto legacy = fixture.valid;
     legacy.erase("stand_stiffness");
@@ -104,6 +103,9 @@ int main() {
          [](auto &j) { j["deployment_command_limits"][0] = .6; });
   reject("negative command bound rejected",
          [](auto &j) { j["deployment_command_limits"][1] = -.1; });
+  reject("excessive pitch command bound rejected",
+         [](auto &j) { j["deployment_command_limits"][3] = .4; });
+  reject("short command limits rejected", [](auto &j) { j["deployment_command_limits"].erase(3); });
   reject("unsafe tilt threshold rejected", [](auto &j) { j["orientation_threshold"] = 1; });
   reject("recovery hysteresis enforced",
          [](auto &j) { j["safety"]["recovery_gravity_threshold"] = .5; });

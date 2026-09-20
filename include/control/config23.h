@@ -9,7 +9,7 @@ namespace g1 {
 struct Config23 {
   Joints23 defaults{}, kp{}, kd{}, scale{}, lower{}, upper{};
   Joints23 standKp{}, standKd{}, standFf{};
-  std::array<float, 3> commandLimit{};
+  std::array<float, 4> commandLimit{};
   std::filesystem::path model;
   float dt = .02f, gaitPeriod = .6f, standDuration = 3.f;
   control::SafetyLimits safety;
@@ -27,8 +27,8 @@ struct Config23 {
     for (const auto &index : j.at("joint_ids_map"))
       if (!index.is_number_integer())
         throw std::runtime_error("joint mapping indices must be integers");
-    if (j.at("policy_contract") != "unitree_rl_mjlab_g1_23dof_velocity_v0" ||
-        j.at("policy_dof") != 23 || j.at("motor_count") != 29 || j.at("observation_size") != 80 ||
+    if (j.at("policy_contract") != "unitree_rl_mjlab_g1_23dof_velocity_v1" ||
+        j.at("policy_dof") != 23 || j.at("motor_count") != 29 || j.at("observation_size") != 81 ||
         j.at("joint_ids_map") != nlohmann::json(kPolicyToMotor))
       throw std::runtime_error("unsupported 23DoF policy contract or mapping");
     Config23 c;
@@ -79,9 +79,9 @@ struct Config23 {
         std::abs(c.gaitPeriod - .6f) > 1e-6f || !std::isfinite(c.standDuration) ||
         c.standDuration < 2 || c.standDuration > 30)
       throw std::runtime_error("invalid policy timing");
-    c.commandLimit = j.at("deployment_command_limits").get<std::array<float, 3>>();
-    const std::array<float, 3> maxCommand{.5f, .5f, 1.f};
-    for (std::size_t i = 0; i < 3; ++i)
+    c.commandLimit = j.at("deployment_command_limits").get<std::array<float, 4>>();
+    const std::array<float, 4> maxCommand{.5f, .5f, 1.f, .35f};
+    for (std::size_t i = 0; i < 4; ++i)
       if (!std::isfinite(c.commandLimit[i]) || c.commandLimit[i] < 0 ||
           c.commandLimit[i] > maxCommand[i])
         throw std::runtime_error("invalid command limits");

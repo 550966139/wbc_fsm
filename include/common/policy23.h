@@ -3,10 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <string>
 
 namespace g1 {
 using Joints23 = std::array<float, kPolicyDof>;
-using Observation23 = std::array<float, 80>;
+using Observation23 = std::array<float, 81>;
 inline std::array<float, 3> gravityFromQuaternion(const std::array<float, 4> &q) {
   float norm = 0;
   for (float v : q)
@@ -17,11 +18,12 @@ inline std::array<float, 3> gravityFromQuaternion(const std::array<float, 4> &q)
   const float w = q[0] * s, x = q[1] * s, y = q[2] * s, z = q[3] * s;
   return {2.f * (w * y - x * z), -2.f * (y * z + w * x), 2.f * (x * x + y * y) - 1.f};
 }
-// Official velocity-v0 concatenation. Phase advances even when command is zero;
-// sin/cos are masked when command norm is below 0.1.
+// Official velocity-v1 concatenation (lateral+pitch retrain): the command is
+// 4-dimensional [vx, vy, wyaw, pitch]. Phase advances even when command is
+// zero; sin/cos are masked when the 4-D command norm is below 0.1.
 inline Observation23 observation23(const std::array<float, 3> &gyro,
                                    const std::array<float, 3> &gravity,
-                                   const std::array<float, 3> &command, const Joints23 &q,
+                                   const std::array<float, 4> &command, const Joints23 &q,
                                    const Joints23 &dq, const Joints23 &defaults,
                                    const Joints23 &lastAction, float &phase, float dt,
                                    float period) {
@@ -36,17 +38,19 @@ inline Observation23 observation23(const std::array<float, 3> &gyro,
   for (std::size_t i = 0; i < 3; ++i) {
     obs[i] = gyro[i];
     obs[3 + i] = gravity[i];
+  }
+  for (std::size_t i = 0; i < 4; ++i) {
     obs[6 + i] = command[i];
     norm += command[i] * command[i];
   }
   if (std::sqrt(norm) >= .1f) {
-    obs[9] = std::sin(phase * 6.28318530718f);
-    obs[10] = std::cos(phase * 6.28318530718f);
+    obs[10] = std::sin(phase * 6.28318530718f);
+    obs[11] = std::cos(phase * 6.28318530718f);
   }
   for (std::size_t i = 0; i < kPolicyDof; ++i) {
-    obs[11 + i] = q[i] - defaults[i];
-    obs[34 + i] = dq[i];
-    obs[57 + i] = lastAction[i];
+    obs[12 + i] = q[i] - defaults[i];
+    obs[35 + i] = dq[i];
+    obs[58 + i] = lastAction[i];
   }
   for (float v : obs)
     if (!std::isfinite(v))
@@ -92,9 +96,13 @@ inline void validateTargets23(const Joints23 &targets, const Joints23 &measured,
     if (targets[i] < lower[i] || targets[i] > upper[i])
       throw std::runtime_error("joint target outside configured limits");
     if (std::abs(targets[i] - measured[i]) > maxTrackingError)
-      throw std::runtime_error("excessive joint tracking error");
+      throw std::runtime_error("excessive joint tracking error: joint " + std::to_string(i) +
+                               " target " + std::to_string(targets[i]) + " measured " +
+                               std::to_string(measured[i]));
     if (std::abs(targets[i] - previous[i]) > maxTargetStep)
-      throw std::runtime_error("excessive joint target step");
+      throw std::runtime_error("excessive joint target step: joint " + std::to_string(i) +
+                               " target " + std::to_string(targets[i]) + " previous " +
+                               std::to_string(previous[i]));
   }
 }
 } // namespace g1

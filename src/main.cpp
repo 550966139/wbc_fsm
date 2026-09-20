@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
     const auto config = g1::Config23::load(configPath);
     if (!std::filesystem::is_regular_file(config.model))
       throw std::runtime_error("23DoF ONNX model not found: " + config.model.string() +
-                               ". Export a matching trained 80-input / 23-output velocity policy; "
+                               ". Export a matching trained 81-input / 23-output velocity policy; "
                                "the bundled legacy models are incompatible.");
 
     // Construct and validate the entire policy before any network activity.

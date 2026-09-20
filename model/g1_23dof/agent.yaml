@@ -1,4 +1,4 @@
-seed: 42
+seed: 20260920
 num_steps_per_env: 24
 max_iterations: 10001
 obs_groups:

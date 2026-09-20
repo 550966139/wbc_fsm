@@ -69,8 +69,8 @@
     0
   ],
   "model_path": "model/g1_23dof/policy.onnx",
-  "policy_contract": "unitree_rl_mjlab_g1_23dof_velocity_v0",
-  "observation_size": 80,
+  "policy_contract": "unitree_rl_mjlab_g1_23dof_velocity_v1",
+  "observation_size": 81,
   "stand_duration": 3.0,
   "stiffness": [
     40.2,
@@ -253,13 +253,14 @@
     "tilt_confirmation_ms": 40,
     "recovery_duration_ms": 500,
     "max_joint_velocity": 30.0,
-    "max_tracking_error": 1.2,
+    "max_tracking_error": 1.5,
     "max_target_step": 1.0
   },
   "deployment_command_limits": [
-    0.2,
-    0.1,
-    0.2
+    0.3,
+    0.3,
+    0.4,
+    0.25
   ],
   "stand_gravity_ff": [
     6.039,

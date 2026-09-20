@@ -38,7 +38,7 @@ def value_info(name, width, data_type=1):
     return blob(1, name) + blob(2, blob(1, tensor_type))
 
 
-def constant_model(input_width=80, output_width=23, value=0.0, data_type=1):
+def constant_model(input_width=81, output_width=23, value=0.0, data_type=1):
     """Untrained constant output, deliberately kept outside model/ and deployment."""
     raw = struct.pack("<" + ("f" if data_type == 1 else "q") * output_width,
                       *([value] * output_width))
@@ -82,7 +82,7 @@ def main():
         good_config = check("valid-constant", constant_model(), True, "DDS was not started")
         check("missing", None, False, "model not found")
         check("corrupt", b"this is not an ONNX model", False, "stopped:")
-        check("wrong-input", constant_model(input_width=96), False, "float input [1,80]")
+        check("wrong-input", constant_model(input_width=96), False, "float input [1,81]")
         check("wrong-output", constant_model(output_width=29), False, "float output [1,23]")
         check("wrong-type", constant_model(value=0, data_type=7), False, "float output [1,23]")
         check("nan-action", constant_model(value=float("nan")), False, "non-finite action")
