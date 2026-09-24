@@ -7,6 +7,11 @@ FSM::FSM(CtrlComponents *ctrlComp) : _ctrlComp(ctrlComp) {
   _stateList.fixedStand = std::make_unique<State_FixedStand>(_ctrlComp);
   if (_ctrlComp->use23()) {
     _stateList.loco = std::make_unique<State_Policy23>(_ctrlComp);
+    // Motion tracking is constructed only when a tracking config was provided
+    // and its motion CSV loaded; otherwise the R2+B gate in FixedStand reports
+    // tracking as unavailable and the velocity path is byte-identical.
+    if (_ctrlComp->configTracking23 && _ctrlComp->trackingMotion)
+      _stateList.tracking = std::make_unique<State_Tracking23>(_ctrlComp);
   } else {
     _stateList.loco = std::make_unique<State_Loco>(_ctrlComp);
     _stateList.amp = std::make_unique<State_AMP>(_ctrlComp);
@@ -90,6 +95,9 @@ void FSM::run() {
           _currentState->exit();
           _currentState = next;
           _currentState->enter();
+          // The first command of the new state is step-checked against the
+          // measured pose, not the previous state's last command.
+          _ctrlComp->noteStateEntry();
           std::cout << "[FSM] " << _currentState->_stateNameString << std::endl;
         }
         _currentState->run();
@@ -149,6 +157,8 @@ FSMState *FSM::getNextState(FSMStateName stateName) {
     return _stateList.amp.get();
   case FSMStateName::MJAMP:
     return _stateList.mjamp.get();
+  case FSMStateName::TRACKING:
+    return _stateList.tracking.get();
   default:
     return nullptr;
   }

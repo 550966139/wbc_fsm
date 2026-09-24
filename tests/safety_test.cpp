@@ -68,5 +68,34 @@ int main() {
   interruptedRecovery.checkState(true, start + 500ms, upright, start + 500ms);
   suite.check(!interruptedRecovery.recover(true, start + 500ms),
               "state loss resets recovery interval");
+
+  // Per-state command-guard override (used by the tracking state): swaps only
+  // the two validateTargets23 limits, restores idempotently, rejects garbage.
+  control::SafetySupervisor guards;
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float baseTrackingError = guards.limits().maxTrackingError;
+  const float baseTargetStep = guards.limits().maxTargetStep;
+  guards.restoreCommandGuards();
+  suite.check(guards.limits().maxTrackingError == baseTrackingError &&
+                  guards.limits().maxTargetStep == baseTargetStep,
+              "restore without override is a no-op");
+  guards.overrideCommandGuards(1.4f, .9f);
+  suite.near(guards.limits().maxTrackingError, 1.4f, "override swaps tracking-error guard");
+  suite.near(guards.limits().maxTargetStep, .9f, "override swaps target-step guard");
+  guards.overrideCommandGuards(1.1f, .8f);
+  suite.near(guards.limits().maxTrackingError, 1.1f, "re-override updates the active guards");
+  guards.restoreCommandGuards();
+  suite.check(guards.limits().maxTrackingError == baseTrackingError &&
+                  guards.limits().maxTargetStep == baseTargetStep,
+              "restore returns the configured base guards after re-override");
+  guards.restoreCommandGuards();
+  suite.check(guards.limits().maxTrackingError == baseTrackingError,
+              "double restore stays a no-op");
+  suite.throws([&] { guards.overrideCommandGuards(0.f, .9f); },
+               "zero tracking-error guard rejected");
+  suite.throws([&] { guards.overrideCommandGuards(1.4f, -1.f); }, "negative step guard rejected");
+  suite.throws([&] { guards.overrideCommandGuards(nan, .9f); }, "NaN guard rejected");
+  suite.near(guards.limits().maxTrackingError, baseTrackingError,
+             "rejected overrides leave the base guards untouched");
   return suite.result();
 }

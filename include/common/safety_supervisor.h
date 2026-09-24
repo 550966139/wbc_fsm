@@ -2,6 +2,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <stdexcept>
 #include <string>
 
 namespace control {
@@ -77,9 +78,34 @@ public:
   bool latched() const { return latched_; }
   const std::string &reason() const { return reason_; }
   const SafetyLimits &limits() const { return limits_; }
+  // Per-state command-guard override (validateTargets23 reads limits()): the
+  // motion-tracking state swaps in its own calibrated max_tracking_error /
+  // max_target_step on entry. restoreCommandGuards() is idempotent, so every
+  // state-exit path (transition, fault, or a failed enter) unwinds safely.
+  void overrideCommandGuards(float maxTrackingError, float maxTargetStep) {
+    if (!std::isfinite(maxTrackingError) || maxTrackingError <= 0.f ||
+        !std::isfinite(maxTargetStep) || maxTargetStep <= 0.f)
+      throw std::runtime_error("invalid per-state command guards");
+    if (!guardsOverridden_) {
+      baseMaxTrackingError_ = limits_.maxTrackingError;
+      baseMaxTargetStep_ = limits_.maxTargetStep;
+      guardsOverridden_ = true;
+    }
+    limits_.maxTrackingError = maxTrackingError;
+    limits_.maxTargetStep = maxTargetStep;
+  }
+  void restoreCommandGuards() {
+    if (guardsOverridden_) {
+      limits_.maxTrackingError = baseMaxTrackingError_;
+      limits_.maxTargetStep = baseMaxTargetStep_;
+      guardsOverridden_ = false;
+    }
+  }
 
 private:
   SafetyLimits limits_;
+  float baseMaxTrackingError_ = 0.f, baseMaxTargetStep_ = 0.f;
+  bool guardsOverridden_ = false;
   bool latched_ = false;
   std::string reason_;
   SafetyClock::time_point tiltSince_{}, recoverySince_{};

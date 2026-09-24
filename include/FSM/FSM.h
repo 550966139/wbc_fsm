@@ -8,11 +8,12 @@
 #include "FSM/State_MJAmp.h"
 #include "FSM/State_Passive.h"
 #include "FSM/State_Policy23.h"
+#include "FSM/State_Tracking23.h"
 #include "FSM/State_WBC.h"
 #include <memory>
 
 struct FSMStateList {
-  std::unique_ptr<FSMState> passive, fixedStand, loco, wbc, amp, mjamp;
+  std::unique_ptr<FSMState> passive, fixedStand, loco, wbc, amp, mjamp, tracking;
 };
 
 class FSM {

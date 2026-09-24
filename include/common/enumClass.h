@@ -63,6 +63,7 @@ enum class FSMStateName{
     WBCright,
     AMP,
     MJAMP,
+    TRACKING,
 };
 
 #endif  // ENUMCLASS_H

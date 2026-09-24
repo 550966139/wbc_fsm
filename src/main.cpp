@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -16,10 +17,14 @@ void shutDown(int) { keepRunning = 0; }
 
 void usage() {
   std::cout << "G1 23DoF controller\n"
-               "  wbc_fsm [--check] [--config PATH]\n"
-               "  wbc_fsm --run [--config PATH] [--interface IFACE] [--domain ID]\n\n"
+               "  wbc_fsm [--check] [--config PATH] [--tracking-config PATH]\n"
+               "  wbc_fsm --run [--config PATH] [--tracking-config PATH] [--interface IFACE] "
+               "[--domain ID]\n\n"
                "Default: validate config and ONNX without connecting DDS or publishing commands.\n"
                "--run starts DDS in damping; START enters stand, R2+A enters the velocity policy.\n"
+               "With a tracking config: R2+B enters motion tracking from stand, R2+B aborts.\n"
+               "Without --tracking-config, config/g1_23dof_tracking.json is auto-detected, and\n"
+               "used only when its model and motion files also exist.\n"
                "L2+B latches damping; SELECT or SIGINT exits with a brief damping handoff.\n"
                "After a fault: recover, press START to acknowledge, release, then START to stand.\n"
                "DDS defaults: UNITREE_DDS_IFACE=lo, UNITREE_DDS_DOMAIN=1 (simulation).\n"
@@ -33,6 +38,8 @@ int main(int argc, char **argv) {
     bool selectedMode = false;
     std::filesystem::path configPath =
         std::filesystem::path(PROJECT_ROOT_DIR) / "config/g1_23dof.json";
+    std::filesystem::path trackingPath;
+    bool trackingExplicit = false;
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
       if (arg == "--help" || arg == "-h") {
@@ -44,13 +51,17 @@ int main(int argc, char **argv) {
           throw std::runtime_error("select exactly one of --check or --run");
         run = arg == "--run";
         selectedMode = true;
-      } else if (arg == "--config" || arg == "--interface" || arg == "--domain") {
+      } else if (arg == "--config" || arg == "--tracking-config" || arg == "--interface" ||
+                 arg == "--domain") {
         if (++i >= argc)
           throw std::runtime_error("missing value for " + arg);
         if (arg == "--config")
           configPath = std::filesystem::absolute(argv[i]);
-        else if (setenv(arg == "--interface" ? "UNITREE_DDS_IFACE" : "UNITREE_DDS_DOMAIN", argv[i],
-                        1) != 0)
+        else if (arg == "--tracking-config") {
+          trackingPath = std::filesystem::absolute(argv[i]);
+          trackingExplicit = true;
+        } else if (setenv(arg == "--interface" ? "UNITREE_DDS_IFACE" : "UNITREE_DDS_DOMAIN",
+                          argv[i], 1) != 0)
           throw std::runtime_error("cannot set DDS option");
       } else {
         throw std::runtime_error("unknown argument: " + arg);
@@ -63,6 +74,33 @@ int main(int argc, char **argv) {
                                ". Export a matching trained 81-input / 23-output velocity policy; "
                                "the bundled legacy models are incompatible.");
 
+    // Optional tracking (dance) contract. An explicit --tracking-config is
+    // strict: any failure aborts startup. The auto-detected checked-in config
+    // enables tracking only once its model and motion files exist, so a tree
+    // without the trained model behaves exactly as before.
+    std::optional<g1::ConfigTracking23> trackingConfig;
+    if (!trackingExplicit) {
+      const auto candidate =
+          std::filesystem::path(PROJECT_ROOT_DIR) / "config/g1_23dof_tracking.json";
+      if (std::filesystem::is_regular_file(candidate)) {
+        try {
+          auto candidateConfig = g1::ConfigTracking23::load(candidate);
+          if (std::filesystem::is_regular_file(candidateConfig.model) &&
+              std::filesystem::is_regular_file(candidateConfig.motion))
+            trackingPath = candidate;
+          else
+            std::cout << "Tracking config present but model/motion files missing; tracking "
+                         "disabled."
+                      << std::endl;
+        } catch (const std::exception &error) {
+          std::cout << "Tracking config ignored (" << error.what() << "); tracking disabled."
+                    << std::endl;
+        }
+      }
+    }
+    if (!trackingPath.empty())
+      trackingConfig = g1::ConfigTracking23::load(trackingPath);
+
     // Construct and validate the entire policy before any network activity.
     auto ioOwner = std::make_unique<IOSDK>();
     auto *io = ioOwner.get();
@@ -71,10 +109,14 @@ int main(int argc, char **argv) {
     bool running = true;
     components.running = &running;
     components.configure23(config);
+    if (trackingConfig)
+      components.configureTracking23(*trackingConfig);
     ControlFrame controller(&components);
     if (!run) {
-      std::cout << "PASS: 23DoF config and ONNX contract checked; DDS was not started.\n"
-                   "This does not establish trained-model provenance or sim-to-real validity.\n";
+      std::cout << "PASS: 23DoF config and ONNX contract checked; DDS was not started.\n";
+      if (trackingConfig)
+        std::cout << "Tracking: config, motion CSV and 124-input ONNX contract checked.\n";
+      std::cout << "This does not establish trained-model provenance or sim-to-real validity.\n";
       return 0;
     }
 

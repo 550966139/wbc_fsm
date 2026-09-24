@@ -15,6 +15,11 @@ for name in policy23 safety; do
   "$build_dir/${name}_test"
 done
 
+"$compiler" "${flags[@]}" -I"$project_dir/src" \
+  "$project_dir/tests/tracking23_contract_test.cpp" "$project_dir/src/common/motion_csv.cpp" \
+  -o "$build_dir/tracking23_contract_test"
+"$build_dir/tracking23_contract_test"
+
 if [[ -n ${NLOHMANN_JSON_INCLUDE_DIR:-} ]]; then
   flags+=(-I"$NLOHMANN_JSON_INCLUDE_DIR")
 fi
@@ -22,6 +27,9 @@ if printf '#include <nlohmann/json.hpp>\n' | "$compiler" "${flags[@]}" -x c++ -E
   "$compiler" "${flags[@]}" "-DPROJECT_ROOT_DIR=\"$project_dir\"" \
     "$project_dir/tests/config23_test.cpp" -o "$build_dir/config23_test"
   "$build_dir/config23_test"
+  "$compiler" "${flags[@]}" "-DPROJECT_ROOT_DIR=\"$project_dir\"" \
+    "$project_dir/tests/config_tracking23_test.cpp" -o "$build_dir/config_tracking23_test"
+  "$build_dir/config_tracking23_test"
 else
   printf '%s\n' 'SKIP: Config23 tests require nlohmann/json.hpp (set NLOHMANN_JSON_INCLUDE_DIR).'
 fi

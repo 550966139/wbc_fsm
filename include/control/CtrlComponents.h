@@ -1,10 +1,13 @@
 #ifndef CTRLCOMPONENTS_H
 #define CTRLCOMPONENTS_H
 
+#include "common/motion_csv.h"
 #include "control/config23.h"
+#include "control/config_tracking23.h"
 #include "interface/IOInterface.h"
 #include "message/LowlevelCmd.h"
 #include "message/LowlevelState.h"
+#include <memory>
 #include <optional>
 
 struct CtrlComponents {
@@ -29,6 +32,11 @@ struct CtrlComponents {
   CtrlPlatform ctrlPlatform = CtrlPlatform::MUJOCO;
   control::SafetySupervisor safety;
   std::optional<g1::Config23> config23;
+  // Optional motion-tracking (dance) contract: present only when a tracking
+  // config was supplied and its motion CSV loaded; the FSM constructs
+  // State_Tracking23 only then, so the velocity path is unchanged otherwise.
+  std::optional<g1::ConfigTracking23> configTracking23;
+  std::shared_ptr<const g1::MotionCsv23> trackingMotion;
 
   void configure23(const g1::Config23 &config) {
     config23 = config;
@@ -36,7 +44,21 @@ struct CtrlComponents {
     safety = control::SafetySupervisor(config.safety);
     setDampingCommand();
   }
+  void configureTracking23(const g1::ConfigTracking23 &config) {
+    // Load the motion first: on failure the config is not installed and the
+    // tracking state stays unavailable instead of half-configured.
+    trackingMotion = std::make_shared<const g1::MotionCsv23>(g1::MotionCsv23::load(config.motion));
+    configTracking23 = config;
+  }
   bool use23() const { return config23.has_value(); }
+
+  // State-entry reseeding of the target-step guard: the first active command
+  // validated after an FSM state entry measures the step against the current
+  // measured pose instead of the previous state's last command. Entry gates
+  // already bound |q - entry pose|, so the first-cycle step is the true
+  // command jump; later cycles keep the command chain. The FSM calls this on
+  // every transition; damping resets the same baseline via previousActive_.
+  void noteStateEntry() { seedBaseline_ = true; }
 
   std::array<float, 3> getGravity() const {
     const auto &q = lowState->imu.quaternion;
@@ -90,6 +112,7 @@ struct CtrlComponents {
     }
     previousActive_ = false;
     standBlend_ = 0.f;
+    seedBaseline_ = false;
   }
   void setTargets23(const g1::Joints23 &targets) {
     // The six absent motor slots remain disabled, including during transitions.
@@ -156,10 +179,12 @@ struct CtrlComponents {
         targets[i] = c.q;
       }
       const auto measured = positions23();
-      g1::validateTargets23(targets, measured, previousActive_ ? previousTargets_ : measured,
+      g1::validateTargets23(targets, measured,
+                            previousActive_ && !seedBaseline_ ? previousTargets_ : measured,
                             config23->lower, config23->upper, safety.limits().maxTrackingError,
                             safety.limits().maxTargetStep);
       previousTargets_ = targets;
+      seedBaseline_ = false;
     }
     previousActive_ = active;
   }
@@ -176,6 +201,7 @@ private:
   }
   g1::Joints23 previousTargets_{};
   bool previousActive_ = false;
+  bool seedBaseline_ = false;
   float standBlend_ = 0.f;
 };
 #endif

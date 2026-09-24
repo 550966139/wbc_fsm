@@ -1,5 +1,6 @@
 
 #include "FSM/State_FixedStand.h"
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 
@@ -89,26 +90,42 @@ FSMStateName State_FixedStand::checkChange() {
         std::cout << "[FSM] R2+A held: stand interpolation not complete yet" << std::endl;
         return FSMStateName::FIXEDSTAND;
       }
-      float worstError = 0.f, worstVelocity = 0.f;
-      std::size_t worstJoint = 0;
-      for (std::size_t i = 0; i < g1::kPolicyDof; ++i) {
-        const auto &joint = _lowState->motorState[g1::kPolicyToMotor[i]];
-        const float error = std::abs(joint.q - _ctrlComp->config23->defaults[i]);
-        if (error > worstError) {
-          worstError = error;
-          worstJoint = i;
-        }
-        worstVelocity = std::max(worstVelocity, std::abs(joint.dq));
-      }
-      if (worstError > .15f || worstVelocity > 1.f) {
-        std::cout << "[FSM] R2+A rejected: worst joint " << worstJoint << " error " << worstError
-                  << " rad, max |dq| " << worstVelocity << std::endl;
+      const auto gate = g1::entryGate23(_ctrlComp->positions23(), _ctrlComp->velocities23(),
+                                        _ctrlComp->config23->defaults);
+      if (!gate.passes(g1::kPolicyEntryMaxJointError, g1::kPolicyEntryMaxJointVel)) {
+        std::cout << "[FSM] R2+A rejected: worst joint " << gate.worstJoint << " error "
+                  << gate.worstError << " rad, max |dq| " << gate.worstVelocity << std::endl;
         return FSMStateName::FIXEDSTAND;
       }
       return FSMStateName::LOCO;
     }
     // return FSMStateName::AMP;
     return FSMStateName::MJAMP;
+  } else if (_lowState->userCmd == UserCommand::R2_B) {
+    if (_ctrlComp->use23()) {
+      if (!_ctrlComp->configTracking23 || !_ctrlComp->trackingMotion) {
+        std::cout << "[FSM] R2+B ignored: tracking policy not available" << std::endl;
+        return FSMStateName::FIXEDSTAND;
+      }
+      if (!_fixedstand_complete_flag) {
+        std::cout << "[FSM] R2+B held: stand interpolation not complete yet" << std::endl;
+        return FSMStateName::FIXEDSTAND;
+      }
+      // Entry gate against the first reference frame of the tracking motion.
+      const auto &tracking = _ctrlComp->configTracking23.value();
+      g1::Joints23 reference{};
+      std::copy_n(_ctrlComp->trackingMotion->jointPos(0), reference.size(), reference.begin());
+      const auto gate =
+          g1::entryGate23(_ctrlComp->positions23(), _ctrlComp->velocities23(), reference);
+      if (!gate.passes(tracking.entryMaxJointError, tracking.entryMaxJointVel)) {
+        std::cout << "[FSM] R2+B rejected: worst joint " << gate.worstJoint << " error "
+                  << gate.worstError << " rad vs motion frame 0, max |dq| " << gate.worstVelocity
+                  << std::endl;
+        return FSMStateName::FIXEDSTAND;
+      }
+      return FSMStateName::TRACKING;
+    }
+    return FSMStateName::FIXEDSTAND;
   } else if (_lowState->userCmd == UserCommand::SELECT) {
     throw std::runtime_error("exit..");
     return FSMStateName::PASSIVE;

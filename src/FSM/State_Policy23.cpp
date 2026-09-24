@@ -89,4 +89,23 @@ void State_Policy23::exit() {
   phase_ = 0.f;
 }
 
-FSMStateName State_Policy23::checkChange() { return FSMStateName::LOCO; }
+FSMStateName State_Policy23::checkChange() {
+  if (_lowState->userCmd != UserCommand::R2_B)
+    return FSMStateName::LOCO;
+  // Walk -> dance: same frame-0 entry gate as the FixedStand R2+B branch.
+  if (!_ctrlComp->configTracking23 || !_ctrlComp->trackingMotion) {
+    std::cout << "[FSM] R2+B ignored: tracking policy not available" << std::endl;
+    return FSMStateName::LOCO;
+  }
+  const auto &tracking = _ctrlComp->configTracking23.value();
+  g1::Joints23 reference{};
+  std::copy_n(_ctrlComp->trackingMotion->jointPos(0), reference.size(), reference.begin());
+  const auto gate = g1::entryGate23(_ctrlComp->positions23(), _ctrlComp->velocities23(), reference);
+  if (!gate.passes(tracking.entryMaxJointError, tracking.entryMaxJointVel)) {
+    std::cout << "[FSM] R2+B rejected: worst joint " << gate.worstJoint << " error "
+              << gate.worstError << " rad vs motion frame 0, max |dq| " << gate.worstVelocity
+              << std::endl;
+    return FSMStateName::LOCO;
+  }
+  return FSMStateName::TRACKING;
+}

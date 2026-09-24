@@ -136,5 +136,44 @@ int main() {
   setMeasured(config.defaults);
   control.lowState->userValue.lx = 1.1f;
   suite.check(!control.safetyCheck(), "out-of-range joystick latches");
+
+  // State-entry baseline seeding (noteStateEntry): the first active command
+  // after an entry measures the target step against the current measured pose,
+  // not the inherited command chain; later cycles keep the chain. Uses a tight
+  // step guard so a 0.25 rad deviation discriminates the two baselines.
+  auto tight = config;
+  tight.safety.maxTargetStep = .2f;
+  control.configure23(tight);
+  auto offset = config.defaults;
+  offset[3] += .25f;
+  auto chainAtDefaults = [&]() {
+    control.setDampingCommand();
+    control.validateCommand();
+    setMeasured(config.defaults);
+    control.setTargets23(config.defaults);
+    control.validateCommand(); // chain: previous targets = defaults
+  };
+  chainAtDefaults();
+  setMeasured(offset);
+  control.setTargets23(offset);
+  suite.throws([&] { control.validateCommand(); },
+               "inherited chain trips on an entry-like jump (old baseline semantics)");
+  chainAtDefaults();
+  setMeasured(offset);
+  control.noteStateEntry();
+  control.setTargets23(offset);
+  control.validateCommand();
+  suite.check(true, "seeded entry accepts a first command close to the measured pose");
+  setMeasured(offset);
+  control.setTargets23(config.defaults);
+  suite.throws([&] { control.validateCommand(); },
+               "command chain restored after the seeded first cycle");
+  chainAtDefaults();
+  setMeasured(offset);
+  control.noteStateEntry();
+  control.setTargets23(config.defaults);
+  suite.throws([&] { control.validateCommand(); },
+               "seeded entry still trips when the first command is far from the measured pose");
+  control.configure23(config);
   return suite.result();
 }

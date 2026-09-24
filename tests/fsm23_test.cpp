@@ -58,6 +58,8 @@ int main(int argc, char **argv) {
   CHECK(fsm.stateName() == FSMStateName::FIXEDSTAND);
   step(UserCommand::R2_A);
   CHECK(fsm.stateName() == FSMStateName::FIXEDSTAND); // early policy entry rejected
+  step(UserCommand::R2_B);
+  CHECK(fsm.stateName() == FSMStateName::FIXEDSTAND); // no tracking config: R2+B inert
   for (int i = 0; i < 155; ++i)
     step();
   for (std::size_t i = 0; i < g1::kPolicyDof; ++i) {

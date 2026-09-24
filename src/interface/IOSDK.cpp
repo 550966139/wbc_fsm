@@ -253,6 +253,8 @@ void IOSDK::LowStateHandler(const void *message) {
     cmd = UserCommand::START;
   if (gamepad_.R2.pressed && gamepad_.A.pressed)
     cmd = UserCommand::R2_A;
+  if (use23_ && gamepad_.R2.pressed && gamepad_.B.pressed)
+    cmd = UserCommand::R2_B; // tracking (dance) enter/abort on the 23DoF path
   if (!use23_) {
     if (gamepad_.R1.pressed)
       cmd = UserCommand::R1;

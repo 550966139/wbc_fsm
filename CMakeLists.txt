@@ -47,7 +47,7 @@ if(WBC_BUILD_CONTROLLER)
 
     file(GLOB_RECURSE SRC_LIST CONFIGURE_DEPENDS "src/*/*.cpp" "src/*/*.cc")
     add_executable(wbc_fsm src/main.cpp ${SRC_LIST})
-    target_include_directories(wbc_fsm PRIVATE include)
+    target_include_directories(wbc_fsm PRIVATE include src)
     target_compile_definitions(wbc_fsm PRIVATE PROJECT_ROOT_DIR="${PROJECT_SOURCE_DIR}")
     target_link_libraries(wbc_fsm PRIVATE
         ONNXRuntime::ONNXRuntime unitree_sdk2 Threads::Threads
@@ -66,6 +66,9 @@ if(BUILD_TESTING)
 
     add_port_test(g1_policy23_test tests/policy23_test.cpp g1_policy23_contract)
     add_port_test(g1_safety_test tests/safety_test.cpp g1_safety_regression)
+    add_port_test(g1_tracking23_test tests/tracking23_contract_test.cpp g1_tracking23_contract)
+    target_sources(g1_tracking23_test PRIVATE src/common/motion_csv.cpp)
+    target_include_directories(g1_tracking23_test PRIVATE src)
 
     if(WBC_BUILD_CONTROLLER)
         find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -73,13 +76,20 @@ if(BUILD_TESTING)
             set(FSM_TEST_SOURCES ${SRC_LIST})
             list(FILTER FSM_TEST_SOURCES EXCLUDE REGEX "/interface/")
             add_executable(g1_fsm23_test tests/fsm23_test.cpp ${FSM_TEST_SOURCES})
-            target_include_directories(g1_fsm23_test PRIVATE include tests)
+            target_include_directories(g1_fsm23_test PRIVATE include tests src)
             target_compile_definitions(g1_fsm23_test PRIVATE PROJECT_ROOT_DIR="${PROJECT_SOURCE_DIR}")
             target_link_libraries(g1_fsm23_test PRIVATE ONNXRuntime::ONNXRuntime
                 Threads::Threads nlohmann_json::nlohmann_json Eigen3::Eigen)
+            add_executable(g1_tracking23_fsm_test tests/tracking23_fsm_test.cpp ${FSM_TEST_SOURCES})
+            target_include_directories(g1_tracking23_fsm_test PRIVATE include tests src)
+            target_compile_definitions(g1_tracking23_fsm_test PRIVATE
+                PROJECT_ROOT_DIR="${PROJECT_SOURCE_DIR}")
+            target_link_libraries(g1_tracking23_fsm_test PRIVATE ONNXRuntime::ONNXRuntime
+                Threads::Threads nlohmann_json::nlohmann_json Eigen3::Eigen)
             add_test(NAME g1_onnx_and_fsm_offline
                 COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/onnx_preflight_test.py
-                $<TARGET_FILE:wbc_fsm> ${PROJECT_SOURCE_DIR} $<TARGET_FILE:g1_fsm23_test>)
+                $<TARGET_FILE:wbc_fsm> ${PROJECT_SOURCE_DIR} $<TARGET_FILE:g1_fsm23_test>
+                $<TARGET_FILE:g1_tracking23_fsm_test>)
             set_tests_properties(g1_onnx_and_fsm_offline PROPERTIES TIMEOUT 60)
         else()
             message(WARNING "Python3 not found; offline ONNX/FSM integration tests are skipped.")
@@ -93,9 +103,15 @@ if(BUILD_TESTING)
             target_link_libraries(g1_config23_test PRIVATE nlohmann_json::nlohmann_json)
             target_compile_definitions(g1_config23_test PRIVATE
                 PROJECT_ROOT_DIR="${PROJECT_SOURCE_DIR}")
+            add_port_test(g1_config_tracking23_test tests/config_tracking23_test.cpp
+                g1_config_tracking23_validation)
+            target_link_libraries(g1_config_tracking23_test PRIVATE nlohmann_json::nlohmann_json)
+            target_compile_definitions(g1_config_tracking23_test PRIVATE
+                PROJECT_ROOT_DIR="${PROJECT_SOURCE_DIR}")
             find_package(Eigen3 QUIET)
             if(Eigen3_FOUND)
                 add_port_test(g1_control23_test tests/control23_test.cpp g1_control23_commands)
+                target_include_directories(g1_control23_test PRIVATE src)
                 target_link_libraries(g1_control23_test PRIVATE nlohmann_json::nlohmann_json Eigen3::Eigen)
                 target_compile_definitions(g1_control23_test PRIVATE
                     PROJECT_ROOT_DIR="${PROJECT_SOURCE_DIR}")

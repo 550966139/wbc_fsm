@@ -50,9 +50,20 @@ def constant_model(input_width=81, output_width=23, value=0.0, data_type=1):
     return number(1, 8) + blob(2, "offline-regression-only") + blob(7, graph) + blob(8, number(2, 13))
 
 
+def motion_csv_text(defaults, frames=8):
+    """50-column tracking motion fixture; frame 0 pose equals the robot defaults."""
+    rows = []
+    for k in range(frames):
+        pos = list(defaults)
+        pos[0] += 0.005 * k
+        rows.append(",".join(f"{v:.9g}" for v in pos + [0.0] * 23 + [1.0, 0.0, 0.0, 0.0]))
+    return "\n".join(rows) + "\n"
+
+
 def main():
     executable, source, *fsm_executable = map(Path, sys.argv[1:])
     config = json.loads((source / "config/g1_23dof.json").read_text())
+    tracking_config = json.loads((source / "config/g1_23dof_tracking.json").read_text())
     env = os.environ.copy()
     # Test isolation: these tests never request --run or initialize DDS.
     env.pop("UNITREE_DDS_IFACE", None)
@@ -91,6 +102,56 @@ def main():
                 check(model.stem, model, False, "23DoF policy")
         if fsm_executable:
             subprocess.run([str(fsm_executable[0]), str(good_config)], check=True, timeout=30)
+
+        # Tracking (dance) contract: 124-input synthetic graph plus a temp
+        # motion CSV. Guard values differ from the velocity config so the FSM
+        # test can observe the per-state swap.
+        motion_path = directory / "motion.csv"
+        motion_path.write_text(motion_csv_text(config["default_joint_pos"]))
+
+        def check_tracking(label, model, success, expected, motion=motion_path, end_target=None):
+            nonlocal count
+            path = directory / (label + "-tracking.onnx")
+            if isinstance(model, bytes):
+                path.write_bytes(model)
+            tracking_config["model_path"] = str(path)
+            tracking_config["motion_path"] = str(motion)
+            tracking_config["safety"] = {"max_tracking_error": 1.4, "max_target_step": 0.9}
+            # Short window so the FSM test can exercise the settle timeout.
+            tracking_config["handoff_settle_timeout"] = 0.2
+            if end_target is not None:
+                tracking_config["motion_end_target"] = end_target
+            config_path = directory / (label + "-tracking.json")
+            config_path.write_text(json.dumps(tracking_config))
+            tracking_config["motion_end_target"] = "policy23"
+            result = subprocess.run([str(executable), "--check", "--config", str(good_config),
+                                     "--tracking-config", str(config_path)],
+                                    env=env, capture_output=True, text=True, timeout=15)
+            output = result.stdout + result.stderr
+            if (result.returncode == 0) != success or expected not in output or "DDS interface" in output:
+                raise AssertionError(f"{label}: exit={result.returncode}\n{output}")
+            count += 1
+            return config_path
+
+        good_tracking = check_tracking("valid", constant_model(input_width=124), True,
+                                       "124-input ONNX contract checked", end_target="policy23")
+        # Fallback-switch variant for the FSM test's phase-1 behaviour checks.
+        stand_tracking = directory / "stand-tracking.json"
+        stand_config = json.loads(good_tracking.read_text())
+        stand_config["motion_end_target"] = "stand"
+        stand_tracking.write_text(json.dumps(stand_config))
+        check_tracking("missing-model", None, False, "tracking policy missing")
+        check_tracking("wrong-input", constant_model(input_width=81), False,
+                       "tracking policy requires float input [1,124]")
+        check_tracking("wrong-output", constant_model(input_width=124, output_width=29), False,
+                       "tracking policy requires float output [1,23]")
+        check_tracking("missing-motion", constant_model(input_width=124), False,
+                       "cannot open tracking motion CSV", motion=directory / "absent.csv")
+        check_tracking("bad-end-target", constant_model(input_width=124), False,
+                       "unsupported motion_end_target", end_target="loco")
+        if len(fsm_executable) > 1:
+            subprocess.run([str(fsm_executable[1]), str(good_config), str(good_tracking),
+                            str(stand_tracking)], check=True, timeout=60)
     print(f"{count} offline ONNX preflight cases passed; DDS never started")
 
 
