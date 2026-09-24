@@ -462,6 +462,25 @@ User rejected the F2 swap (the reported 滑步 is not fixed) and approved F3. Ro
 
 **Open options** (user decision): (a) F9 = more of the same training (uncertain — F7→F8 did not move the fall point); (b) **R4 data surgery** on the kick-approach segment (cap/reshape the support-ankle dorsiflexion demand or re-solve the root for ankle margin) then retrain — attacks the root cause; (c) pause the training line. Deployed remains F1; F7 (`/tmp/f7_deploy/`, 1.6/6.3) and F8 (`/tmp/f8_deploy/`, 1.3/5.6) staged, undeployed. Sim ops note: the restart-lottery needed 3 rolls this evening (two buzzing basins 13-16 rad/s before a quiet one).
 
+### R4 data surgery + F9 (2026-09-24 evening, user-directed "R4,不用考虑算力和时间成本") — kick fall SOLVED, 3/3 detached passes
+
+**Root-cause completion**: windowed ZMP on the R3 reference (50 Hz frames 440-660) showed 92 % of frames outside the support polygon (worst −5.7 cm @t=10.64 s) — AND the clearance probe found why R3 never engaged there: the **reference right foot hovers p50 2.3 cm (max 4.8 cm) over CSV rows 270-400** (a GVHMR world-z artifact that R2's 1.5 cm contact threshold never classified as contact; the NPZ-side ZMP check classified support by foot *velocity* <0.15 m/s, hence the mismatch). The reference demanded single-support balance on a floating foot; the policy's ankle-fold compensation was chasing contact physics that weren't there.
+
+**R4 = two-script chain** (`take6_pipeline/r4_plant23.py` + `r4_kick23.py`, inputs/outputs in `src/assets/motions/g1_23dof/`):
+1. *Plant* (`r4_plant23.py`, W1 = rows 260-400): lower root Z by the right foot's per-frame hover (p50 2.1 cm, max 4.7, tapered), dual-leg IK — right foot straight down onto the ground (original per-frame XY+orientation kept), left foot keeps its original world pose (swing trajectory preserved). Gates: foot holds ≤1.0 mm, zero limit violations, outside-window bit-identical, dQ back to baseline 0.516 after fixing a warm-start-chain bug I introduced (chaining the full q23 wrote row-260's arm pose into later frames — the same bug class R3's docstring warns about; fixed by chaining legs only).
+2. *ZMP re-solve* (`r4_kick23.py` on the planted CSV, WINDOWS (260,400)+(560,700), MARGIN 15 mm, DMAX 10 cm): contact frames in the kick window n=1→**126**; ZMP margin p50 −2.2→−1.0 cm (residual kept — root shift hit the 10-13 cm budget; left for the policy); root shift max 0.13 m; foot hold ≤1.7 mm; kick apex preserved bit-exact (36.6 cm @row333 both sides of surgery); window-2 dQ spike 0.72 rad/frame noted (IK rollback at row 683, → NPZ joint_vel max 18.66 vs 13.51 — accepted as a brief transient).
+3. *Chain*: `take6_r4_50hz.npz` (1565 frames, quat norms 1.0, outside-window diffs ≤2.5 mrad interpolation bleed only) → `/tmp/motion_r4.csv` (first/last rows bit-identical to deployed `motion.csv`).
+
+**F9 training** (run `2026-09-24_18-27-29_take6F9r4`, warm start F8 `model_80000.pt`, R4 data, F7 config unchanged, 1.1 h): final `error_joint_pos` 0.731 (against the shifted R4 reference — like F2, not comparable to R3-reference numbers), episode length 1831/2000 healthy, `ee_ankle_pos` →0 early (the planted support makes the ankle bar clearable). Ops correction: the "F8 process hung" scare was a `pgrep -f` self-match against the ssh command line — use `pgrep -af train.py | grep -v "bash -c"` instead.
+
+**F9 acceptance** (guards recalibrated 1.6/6.7, staged `/tmp/f9_deploy/`, policy sha prefix `33a28b477efe1d7d`, 224 `--check` dual PASS):
+- **3/3 detached full 1565-frame passes, zero dance latches** (post-dance detached-stand tilt each time = documented sim artifact). F7 was 1/3, F8 0/1.
+- **The fall signature is gone with margin**: dance-window `r_ank_p` min −0.721/−0.726/−0.726 across the three runs → **0.146-0.152 rad clearance from the −0.8727 mechanical limit** (F7's pass run: 0.024; the three failures: −0.9227+). The 0.07 rad coin-flip became a 0.15 rad comfort zone. Dance peak |dq| 10.6-10.7 (F7r1: 23.9 — less scrambling).
+- Amplitude: left big-kick apex **27.6 cm vs ref 36.6 cm = 75 %** (F7 85 % but fell 2/3; F5 49 %; F1 44 %). Right small lift (t=18-22 s) still ~0 — the reference itself only carries a 5.4 cm apex there (GVHMR world-z weakness), R4's window-2 ZMP work didn't unlock it; remains the one dead segment.
+- Slide, dance-windowed same-method comparison: F5 0.033/0.032, F6 0.041/0.041, F7 0.079/0.076, **F9 0.038/0.040** (p50 m/s, L/R) — F7's 2× degradation reversed (its slide was partly off-balance scrambling); F9 sits on the F5/F6 baseline. The "hardware arbitrates slip" verdict stands, now with the best-behaved candidate.
+
+**F9 is the strongest deployable candidate of the campaign** (near-F7 amplitude, F5-level robustness, baseline slide). Deployment swap decision: user's. Deployed remains F1; staged candidates on 224: F2/F5/F6/F7/F8/F9 (`/tmp/f*_deploy/`).
+
 ## Remaining work / missing inputs
 
 - [x] Obtain/train a compatible `Unitree-G1-23Dof-Flat` policy and preserve its actual exported configuration and external weights. (2026-09-17: trained on 192.168.3.224; `model_4900.pt` checkpoint selected after a mid-run PPO collapse; provenance in `model/g1_23dof/`.)
