@@ -1,4 +1,4 @@
-seed: 20260923
+seed: 20260924
 num_steps_per_env: 24
 max_iterations: 10001
 obs_groups:
@@ -8,13 +8,13 @@ obs_groups:
   - critic
 save_interval: 500
 experiment_name: g1_23dof_tracking
-run_name: take6F1surgical
+run_name: take6F9r4
 logger: tensorboard
 wandb_project: mjlab
 wandb_tags: !!python/tuple []
 resume: true
-load_run: 2026-09-22_15-39-04_take6E1
-load_checkpoint: model_30000.pt
+load_run: 2026-09-24_16-42-44_take6F8sampler
+load_checkpoint: model_80000.pt
 clip_actions: null
 upload_model: true
 class_name: OnPolicyRunner

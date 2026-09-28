@@ -481,6 +481,12 @@ User rejected the F2 swap (the reported 滑步 is not fixed) and approved F3. Ro
 
 **F9 is the strongest deployable candidate of the campaign** (near-F7 amplitude, F5-level robustness, baseline slide). Deployment swap decision: user's. Deployed remains F1; staged candidates on 224: F2/F5/F6/F7/F8/F9 (`/tmp/f*_deploy/`).
 
+### F9 deployment (2026-09-28, user-approved) — take6F9r4@90000 now in service
+
+**Swap** (`model/g1_23dof_tracking/` active set): `policy.onnx` = F9 (sha256 prefix `33a28b477efe1d7d`), `motion.csv` = R4-surgered 1565-frame motion (`26c3948b5c0b`, first/last rows bit-identical to F1's), `env.yaml`/`agent.yaml` from run `2026-09-24_18-27-29_take6F9r4` `params/` (motion_file `take6_r4_50hz.npz`, adaptive sampling kernel 5), checkpoint archived as `model_take6_f9r4_90000.pt`. F1 rollback set kept in-place: `policy_take6f1_40000.onnx.bak` (`933e4e9a30bb`), `motion_take6f1_40000.csv.bak` (`db2a5b8581ca`), `env_take6f1.yaml.bak`, `agent_take6f1.yaml.bak`, `model_take6_f1_40000.pt` untouched. Guards recalibrated from the F9 replay (`scripts/replay_tracking23.py --write`, envelopes ×1.5): `max_target_step` 1.2→**1.6**, `max_tracking_error` 5.3→**6.7**; `motion_end_target: "stand"` unchanged. The config test needed no edit (it takes the checked-in config as its baseline).
+
+**Validation**: local host-only ctest 6/6 (SDK2 absent locally, full build not possible here); 224 `~/sim2sim/wbc_fsm` (same file set rsynced, hashes verified) full rebuild + ctest **7/7** (`g1_onnx_and_fsm_offline` drives the F9 policy through 18 preflight cases plus both FSM integration binaries) and `--check` **dual PASS**. Sim cold-start coverage: the 3/3 detached acceptance (boot → START → R2+B → full 1565-frame dance → motion end) ran on these exact artifacts, which subsumes a stand-sanity boot. PC2 (aarch64) still carries F1 — deploy at the next attended hardware session together with the Phase-4 dance flow; never start the controller remotely.
+
 ## Remaining work / missing inputs
 
 - [x] Obtain/train a compatible `Unitree-G1-23Dof-Flat` policy and preserve its actual exported configuration and external weights. (2026-09-17: trained on 192.168.3.224; `model_4900.pt` checkpoint selected after a mid-run PPO collapse; provenance in `model/g1_23dof/`.)
