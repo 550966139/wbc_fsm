@@ -487,6 +487,14 @@ User rejected the F2 swap (the reported 滑步 is not fixed) and approved F3. Ro
 
 **Validation**: local host-only ctest 6/6 (SDK2 absent locally, full build not possible here); 224 `~/sim2sim/wbc_fsm` (same file set rsynced, hashes verified) full rebuild + ctest **7/7** (`g1_onnx_and_fsm_offline` drives the F9 policy through 18 preflight cases plus both FSM integration binaries) and `--check` **dual PASS**. Sim cold-start coverage: the 3/3 detached acceptance (boot → START → R2+B → full 1565-frame dance → motion end) ran on these exact artifacts, which subsumes a stand-sanity boot. PC2 (aarch64) still carries F1 — deploy at the next attended hardware session together with the Phase-4 dance flow; never start the controller remotely.
 
+### Local sim2sim environment (2026-09-28, user-directed) — live viewing moved off the 224 display chain
+
+**Problem**: watching 224 runs through `Xvfb :5 software rendering → Remmina remote grab` dropped frames — the dance looked fast-forwarded/discontinuous to the user. Data proved the motion itself continuous (909 Hz capture: max joint change 1.94° per ~1.1 ms sample; the 50 Hz monotonic control clock paces the dance to wall time, zero latches).
+
+**Fix**: replicate the sim stack on the wsk workstation (both sides Ubuntu 26.04 x86_64 — binaries copied as-is): `~/sim2sim_g1/` = unitree_mujoco + bundled MuJoCo + g1 assets + SDK2 install tree + three system libs from 224, plus `run_local.sh` (one-shot boot: restart sim+controller → auto START → band lower). Local full build of wbc_fsm against that SDK2 + ONNX 1.22.0: ctest **7/7**, `--check` **dual PASS**. Live demo on the local display (Intel UHD 770 hardware GL, Wayland→Xwayland): quiet basin on first roll (the tracking entry gate |dq|≤1.0 doubles as the buzz reject), **detached full-motion pass, zero dance latches** — same known post-dance tilt artifact as 224.
+
+**Workflow decision (user, 2026-09-28)**: 224 remains the production-validation rig (training / data surgery / replay recalibration / detached acceptance); **all sim viewing is local live from now on**. The offline-replay renderer and screen-recording helpers built during the diagnosis were retired and deleted on both sides. Details: `SIM2SIM_HANDOFF.md` section 六.
+
 ## Remaining work / missing inputs
 
 - [x] Obtain/train a compatible `Unitree-G1-23Dof-Flat` policy and preserve its actual exported configuration and external weights. (2026-09-17: trained on 192.168.3.224; `model_4900.pt` checkpoint selected after a mid-run PPO collapse; provenance in `model/g1_23dof/`.)
