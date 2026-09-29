@@ -55,8 +55,8 @@ ref_joint_pos[23], ref_joint_vel[23], ref_anchor_quat_wxyz[4]
 
 - `policy_contract` 必须为 `unitree_rl_mjlab_g1_23dof_tracking_v1`;`observation_size` 124、`policy_dof` 23、`motor_count` 29、`joint_ids_map` 与 `kPolicyToMotor` 完全一致,否则拒绝。
 - `default_joint_pos` / `joint_lower` / `joint_upper` / `stiffness` / `damping` / `action_scale` 与 `config/g1_23dof.json` 相同(共用机器人配置)。
-- `model_path`、`motion_path`:相对路径按仓库根解析(与 config23 相同)。指向 `model/g1_23dof_tracking/policy.onnx` 与 `model/g1_23dof_tracking/motion.csv`(2026-09-23 起为 take6F1surgical@40000 部署版:参考动作经 R1 脚部手术——摆动相幻影背屈软钳、接触帧零改动,带首尾站姿过渡段,1565 帧;调查与对照实验见 `docs/IMPLEMENTATION_STATUS.md` "Foot-artifact investigation" 两节)。
-- `safety.max_target_step` / `safety.max_tracking_error`:TRACKING 状态入场时换入、出场恢复(见第 5 节)。当前为 take6F1surgical@40000 的标定值(**1.2 / 5.3**;换模型必须重新标定,协议与数值留痕 `docs/IMPLEMENTATION_STATUS.md`)。
+- `model_path`、`motion_path`:相对路径按仓库根解析(与 config23 相同)。指向 `model/g1_23dof_tracking/policy.onnx` 与 `model/g1_23dof_tracking/motion.csv`(**2026-09-29 起 = take6F10fullending@100000 部署版**:`unitree_rl_mjlab_g1_23dof_tracking_v1` 契约、R4 手术版参考 + **真人真实结尾**(GMR 暖启动锁死修复后的 1832 帧 36.6 s 版本,首尾站姿过渡 1s/3s;数据链见 `docs/IMPLEMENTATION_STATUS.md` "P0 real-ending recovery" 节)。F9 回滚件 `*_take6f9r4_90000*.bak`、F13(结尾保真候选,踢腿 73%)暂存 224 `/tmp/f13_deploy/`)。
+- `safety.max_target_step` / `safety.max_tracking_error`:TRACKING 状态入场时换入、出场恢复(见第 5 节)。当前为 take6F10fullending@100000 的标定值(**1.5 / 5.5**;换模型必须重新标定,协议与数值留痕 `docs/IMPLEMENTATION_STATUS.md`)。
 - `entry_gate.entry_max_joint_error`(0.15 rad)/ `entry_gate.entry_max_joint_vel`(1.0 rad/s):入场门槛(站立/走跑 → 跟踪,与走跑 R2+A 入场同阈值)。
 - `motion_end_target`(默认 `"policy23"`;**当前发货配置按 2026-09-22/23 用户决策设为 `"stand"`**——舞后不自动交接,手动 R2+A 进走跑):动作播完或 R2+B 中止时的交接目标——`"policy23"` = 过走跑入场门禁后零命令交接给速度策略(门禁不过则回退 FIXEDSTAND 并打印原因);`"stand"` = 回退 FIXEDSTAND(Phase 1 旧行为,调试/ bring-up 用)。
 - `handoff_settle_timeout`(默认 3.0 s,范围 (0, 30]):motion-end 沉降保持窗——播完后光标冻结在引出段末帧、跟踪策略继续运行,每周期重评走跑入场门禁,通过即交接;超时仍不过则回退 FIXEDSTAND 并打印原因。R2+B 中止路径无沉降窗(舞步中段位姿等也过不了门禁),保持单发判定。
@@ -66,7 +66,9 @@ CLI:`--tracking-config <path>` 显式指定(严格:任何缺失/非法即拒绝�
 
 ## 4. 操作
 
-链路(2026-09-22 起,用户拍板):**START → 站立 → R2+A → 走跑 → R2+B → 跳舞 → 播完自动回走跑**。
+链路(按 2026-09-22/23 用户决策,**出厂配置 `motion_end_target="stand"`**:舞完回 FixedStand,手动 R2+A 进走跑;`"policy23"` 链式交接代码保留为配置开关):**START → 站立 → R2+B → 跳舞(36.6 s)→ 播完回站立**。F10 的 1 Hz 关节快照日志 `[track] f=帧/总数 worst j<i> e<误差> q=<23值>`(2026-09-28 起)使每次真机会话天然可离线分析。
+
+**⚠️ F10 结尾走位(已知行为,现场必读)**:结尾段(入场后 t≈31-35 s)策略会自平衡迈步、可能向任意方向移动 1-2 m 再站定(仿真实测漂移 0.8-2 m;根因=张臂定格的幅度衰减,改善中,F13 候选已压到 0.83 m)。**机器人周围 3 m 半径必须清空**。
 
 1. START:阻尼 → 定点站立(插值完成)。
 2. R2+A:站立 → 走跑策略(速度策略零命令原地站立是真机+仿真验证过的主动平衡态)。
@@ -80,7 +82,7 @@ CLI:`--tracking-config <path>` 显式指定(严格:任何缺失/非法即拒绝�
 ## 5. 安全说明
 
 - **分状态安全限值**:`SafetySupervisor::overrideCommandGuards` 在 TRACKING `enter()` 换入跟踪配置的 `max_target_step` / `max_tracking_error`,`exit()` 经 `restoreCommandGuards` 恢复(幂等;状态切换、故障、enter 抛异常等所有出场路径都会经过 `exit()`)。其余限值(关节速度、倾斜阈值、看门狗等)仍由速度配置统一提供。
-- 两个 guard 已按 take6F1surgical@40000 部署模型标定(2026-09-23):`max_target_step` **1.2**(沿用 2026-09-22/23 脱吊入场瞬态实测标定 0.68-1.07×1.15;F1 理想回放步长包络 0.745 rad ×1.5 巧合同值)、`max_tracking_error` **5.3**(回放误差包络 3.494 rad ×1.5,自 8.1 收紧)。注意:误差包络来自理想化开链回放的 last_action 发散伪影,闭环仿真实测零守卫压力;**tracking-error 守卫仍实质空转,operative 保护是 max_target_step**(历次失败候选全部死于步长守卫)。标定协议与数值留痕 `docs/IMPLEMENTATION_STATUS.md`,上机前如需收紧请重新评估。
+- 两个 guard 已按 take6F10fullending@100000 部署模型标定(2026-09-28):`max_target_step` **1.5**、`max_tracking_error` **5.5**(回放包络 0.934/3.640 ×1.5)。注意:误差包络来自理想化开链回放的 last_action 发散伪影,闭环仿真实测零守卫压力;**tracking-error 守卫仍实质空转,operative 保护是 max_target_step**(历次失败候选全部死于步长守卫——F14 的 1.73/2.58 rad 关节 6 步长爆炸即被它拦下)。标定协议与数值留痕 `docs/IMPLEMENTATION_STATUS.md`,上机前如需收紧请重新评估。
 - 控制回路 40 ms 截止时间、状态/命令看门狗、目标步进/跟踪误差校验(`validateTargets23` 读 `safety.limits()`,即换入后的值)全部生效;推理或观测异常当周期锁定阻尼。
 - **交接门禁**:motion-end 沉降窗内每周期重评走跑入场门禁(`g1::entryGate23`,与 FixedStand R2+A/R2+B 同一实现,阈值 0.15 rad / 1.0 rad/s);R2+B 中止为单发评估;超时或不过则回退 FIXEDSTAND 并打印原因行。
 - **入场首周期步长基线(2026-09-22 起)**:FSM 每次状态跳转后,`validateTargets23` 的 `previous` 在**首个有效控制周期从当前实测 q 播种**,而不是继承上一状态的最后指令(`CtrlComponents::noteStateEntry`,仅影响首周期,随后恢复指令链)。入场门禁已保证 q 贴近入场姿态,首周期步长因此是真实的指令跳变;这消除了状态入场/载荷切换瞬态的守卫误判(走跑踝膝指令与舞步帧 0 目标相撞、脱吊进舞、舞中载荷突变),且不放宽任何阈值。阻尼后的首指令原本就从实测播种,行为不变。
@@ -103,3 +105,5 @@ Phase 2/3 已完成:take6g512@8000(num_envs=512 修复后)sim2sim 全项通过�
 **舞蹈↔走跑策略链(2026-09-22,用户拍板)**:motion-end 与 R2+B 中止默认(`motion_end_target="policy23"`)过走跑入场门禁后零命令交接给速度策略,不再回 FixedStand(脱吊跳完即倒的缺陷链由此闭合);走跑中 R2+B 亦可直接进舞蹈(同一帧 0 门禁)。交接/入场门禁统一为 `g1::entryGate23` 单一实现。部署动作文件实测:帧 0 距站姿 0.018 rad、末帧 0.107 rad,均在 0.15 门禁内。
 
 **策略链 224 复测修复(2026-09-22,agent-5 实测驱动)**:复测暴露两问题,均不靠放宽阈值解决,已修复。(A) motion-end 门禁"一锤定音":舞后沉降抖动(|dq| 短时 >1)+ 残余误差让单帧门禁判负(0/3 交接成功,每次安全回退 FixedStand;沉降后手动 R2+A 可进,证明只需等沉降)——改为**沉降保持窗**:播完后光标冻结在引出段末帧、跟踪策略继续运行,每周期重评门禁,通过即交接;超过 `handoff_settle_timeout`(默认 3.0 s)仍不过才回退 FixedStand。R2+B 中止无沉降窗(单发判定不变)。(B) 步长守卫对入场瞬态盲视:E2@7000(步长护栏 0.6)脱吊四连败全部是入场/载荷切换瞬态(走跑进舞 joint10 步 0.68、脱吊进舞 0.95、舞中载荷突变 0.73),而 E1@3000 的 1.0 护栏恰好容纳——标定协议(理想 replay)对瞬态盲视,不是策略回退。修法:FSM 状态跳转后**首个控制周期 `previous` 从当前实测 q 播种**(`CtrlComponents::noteStateEntry`),只影响首周期,随后恢复指令链;入场门禁已保证 q 贴近入场姿态,首周期步长即真实指令跳变。两项修复待 224 再复测确认。
+
+**阶段状态(2026-09-29 收官)**:在役 = **F10(真人结尾版)**,仓库+224+PC2 真机三方一致;**真机首舞 2026-09-28 3/3 全程零锁存**(详见台账 "F10 first hardware session" 节)。候选格局:F10(踢腿 86%,结尾走位 2 m)vs F13(宽 std 臂项:结尾保真 0.83 m/张臂定格误差 0.07-0.11 rad,踢腿 73%,暂存 224 `/tmp/f13_deploy/`)。奖励空间已探索收敛:腿部位置项任何锐化都触发踢腿窗踝过冲折叠(F11/F12 0/2 同签名,踝过冲 0.09→0.37 rad),臂位置宽 std 项修复结尾但以踢腿幅度为价(F13),续训退化(F14 0/2,踢腿段步长爆炸)。下一步杠杆:R6 级参考手术(踢腿窗踝需求钳位)+ F13 配方;H0 真机采集(cap 工具已备)出权威差距表。
