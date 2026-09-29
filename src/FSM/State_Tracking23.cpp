@@ -1,5 +1,6 @@
 #include "FSM/State_Tracking23.h"
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 
@@ -76,6 +77,7 @@ void State_Tracking23::enter() {
   settleLogged_ = false;
   settleElapsed_ = 0.f;
   lastAction_.fill(0.f);
+  logCycle_ = 50;
   entryPose_ = _ctrlComp->positions23();
   rampCycle_ = 0;
   // Entry yaw alignment: the robot world frame is gravity-aligned with
@@ -122,6 +124,28 @@ void State_Tracking23::run() {
   }
   _ctrlComp->setTargets23(target);
   lastAction_ = actions;
+  if (++logCycle_ >= 50) {
+    // 1 Hz joint snapshot: frame cursor, worst reference error and all 23
+    // measured positions — makes every hardware session analyzable from the
+    // controller log alone (hardware gap analysis previously impossible).
+    logCycle_ = 0;
+    const auto &measured = _ctrlComp->positions23();
+    const auto &ref = motion.jointPos(cursor_);
+    std::size_t worst = 0;
+    float worstErr = 0.f;
+    for (std::size_t i = 0; i < g1::kPolicyDof; ++i) {
+      const float e = std::fabs(measured[i] - ref[i]);
+      if (e > worstErr) {
+        worstErr = e;
+        worst = i;
+      }
+    }
+    std::cout << "[track] f=" << cursor_ << "/" << motion.frameCount() << " worst j" << worst
+              << " e" << worstErr << " q=";
+    for (std::size_t i = 0; i < g1::kPolicyDof; ++i)
+      std::cout << (i ? " " : "") << measured[i];
+    std::cout << "\n";
+  }
   if (settling_) {
     // Cursor frozen on the outro stance frame; the policy keeps balancing at
     // the stance pose while checkChange re-evaluates the entry gate.

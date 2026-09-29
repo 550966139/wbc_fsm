@@ -40,4 +40,8 @@ private:
   bool settling_ = false, settleLogged_ = false;
   float settleElapsed_ = 0.f;
   g1::Quat23 entryAlign_{1.f, 0.f, 0.f, 0.f};
+  // 1 Hz joint snapshot log: controller logs otherwise carry no joint data, so
+  // hardware dance sessions were not analyzable without an external capture.
+  // Starts at the threshold to log the first cycle after entry.
+  std::size_t logCycle_ = 50;
 };
