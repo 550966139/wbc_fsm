@@ -64,6 +64,18 @@ def main():
     executable, source, *fsm_executable = map(Path, sys.argv[1:])
     config = json.loads((source / "config/g1_23dof.json").read_text())
     tracking_config = json.loads((source / "config/g1_23dof_tracking.json").read_text())
+    # The checked-in config ships the motions[] library (2026-09-30); the
+    # single-motion synthetic cases below run on its slot 0 rewritten into the
+    # legacy form.
+    if "motions" in tracking_config:
+        slot0 = tracking_config["motions"][0]
+        tracking_config["model_path"] = slot0["model_path"]
+        tracking_config["motion_path"] = slot0["motion_path"]
+        for key in ("safety", "entry_gate", "motion_end_target", "handoff_settle_timeout",
+                    "loop_motion"):
+            if key in slot0:
+                tracking_config[key] = slot0[key]
+        del tracking_config["motions"]
     env = os.environ.copy()
     # Test isolation: these tests never request --run or initialize DDS.
     env.pop("UNITREE_DDS_IFACE", None)
@@ -149,9 +161,60 @@ def main():
                        "cannot open tracking motion CSV", motion=directory / "absent.csv")
         check_tracking("bad-end-target", constant_model(input_width=124), False,
                        "unsupported motion_end_target", end_target="loco")
+
+        # Multi-motion library ("motions" array): two synthetic policies with
+        # distinct per-motion guards; the FSM test drives R2+B / R2+Y through
+        # both entries.
+        def dual_tracking_config():
+            dual = json.loads((source / "config/g1_23dof_tracking.json").read_text())
+            dual.pop("model_path", None)
+            dual.pop("motion_path", None)
+            motion2 = directory / "motion2.csv"
+            motion2.write_text(motion_csv_text(config["default_joint_pos"]))
+            model2 = directory / "dual-motion2.onnx"
+            model2.write_bytes(constant_model(input_width=124))
+            dual["motions"] = [
+                {"name": "dance-one",
+                 "model_path": str(directory / "valid-tracking.onnx"),
+                 "motion_path": str(motion_path),
+                 "safety": {"max_tracking_error": 1.4, "max_target_step": 0.9},
+                 "handoff_settle_timeout": 0.2,
+                 "motion_end_target": "policy23"},
+                {"name": "dance-two",
+                 "model_path": str(model2),
+                 "motion_path": str(motion2),
+                 "safety": {"max_tracking_error": 1.3, "max_target_step": 0.7},
+                 "motion_end_target": "stand"},
+            ]
+            return dual
+
+        def check_tracking_json(label, value, success, expected):
+            nonlocal count
+            config_path = directory / (label + ".json")
+            config_path.write_text(json.dumps(value))
+            result = subprocess.run([str(executable), "--check", "--config", str(good_config),
+                                     "--tracking-config", str(config_path)],
+                                    env=env, capture_output=True, text=True, timeout=15)
+            output = result.stdout + result.stderr
+            if (result.returncode == 0) != success or expected not in output or "DDS interface" in output:
+                raise AssertionError(f"{label}: exit={result.returncode}\n{output}")
+            count += 1
+            return config_path
+
+        dual_tracking = check_tracking_json("dual-valid", dual_tracking_config(), True,
+                                            "124-input ONNX contract checked")
+        mixed = dual_tracking_config()
+        mixed["model_path"] = str(directory / "valid-tracking.onnx")
+        check_tracking_json("dual-legacy-mixed", mixed, False, "cannot be combined")
+        duplicate = dual_tracking_config()
+        duplicate["motions"][1]["name"] = "dance-one"
+        check_tracking_json("dual-duplicate-name", duplicate, False, "duplicate tracking motion name")
+        missing = dual_tracking_config()
+        missing["motions"][1]["model_path"] = str(directory / "absent2.onnx")
+        check_tracking_json("dual-missing-model", missing, False, "tracking policy missing")
         if len(fsm_executable) > 1:
             subprocess.run([str(fsm_executable[1]), str(good_config), str(good_tracking),
-                            str(stand_tracking)], check=True, timeout=60)
+                            str(stand_tracking), str(dual_tracking)], check=True, timeout=60)
     print(f"{count} offline ONNX preflight cases passed; DDS never started")
 
 

@@ -76,8 +76,9 @@ int main(int argc, char **argv) {
 
     // Optional tracking (dance) contract. An explicit --tracking-config is
     // strict: any failure aborts startup. The auto-detected checked-in config
-    // enables tracking only once its model and motion files exist, so a tree
-    // without the trained model behaves exactly as before.
+    // enables tracking only once every configured motion's model and motion
+    // files exist, so a tree without the trained models behaves exactly as
+    // before.
     std::optional<g1::ConfigTracking23> trackingConfig;
     if (!trackingExplicit) {
       const auto candidate =
@@ -85,8 +86,11 @@ int main(int argc, char **argv) {
       if (std::filesystem::is_regular_file(candidate)) {
         try {
           auto candidateConfig = g1::ConfigTracking23::load(candidate);
-          if (std::filesystem::is_regular_file(candidateConfig.model) &&
-              std::filesystem::is_regular_file(candidateConfig.motion))
+          bool filesExist = true;
+          for (const auto &entry : candidateConfig.motions)
+            filesExist = filesExist && std::filesystem::is_regular_file(entry.model) &&
+                         std::filesystem::is_regular_file(entry.motion);
+          if (filesExist)
             trackingPath = candidate;
           else
             std::cout << "Tracking config present but model/motion files missing; tracking "

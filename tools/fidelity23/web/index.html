@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>G1 23DoF 动作保真对比工作台</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/echarts.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>G1 23DoF 动作保真对比工作台</h1>
+  <div class="subtitle">行业标准指标（skating / penetration / float / 世界系误差 / 分段成功率）· 数据来自 900Hz 脱吊验收采集 ·
+    指标服务于优化路由（<a href="#routing">见路由建议</a>）</div>
+  <nav id="versions" class="versions"></nav>
+</header>
+<main>
+  <aside>
+    <div class="panel">
+      <h3>版本</h3>
+      <div id="versionList"></div>
+    </div>
+    <div class="panel">
+      <h3>轮次（时间线/轨迹用）</h3>
+      <div id="runList"></div>
+    </div>
+    <div class="panel about">
+      <h3>指标口径</h3>
+      <ul>
+        <li><b>fsr_ref</b>：参考支撑相中足底水平速度 &gt;0.10 m/s 的帧占比（GMD 分类法）</li>
+        <li><b>float</b>：参考支撑相中鞋底悬空 &gt;5mm 的时长占比（入场吊带期已排除）</li>
+        <li><b>mpjpe</b>：世界系 24 刚体位置误差（入场帧刚体对齐后），p50</li>
+        <li><b>apex</b>：踢腿窗(8.5–12s) 左鞋底最高高度 / 本版参考链同窗最高高度</li>
+        <li><b>drift</b>：结尾段(td≥28.5s) 骨盆净位移 / 路径长</li>
+        <li><b>ankle</b>：支撑踝距机械限位(−0.8727 rad) 余量</li>
+      </ul>
+      <p class="src">分类法来源：Mimicking-Bench (arXiv 2412.17730)、BeyondMimic (arXiv 2508.07200)</p>
+    </div>
+  </aside>
+  <section>
+    <nav class="tabs">
+      <button data-tab="overview" class="active">总览</button>
+      <button data-tab="timeline">时间线</button>
+      <button data-tab="feet">足轨迹</button>
+      <button data-tab="joints">关节误差</button>
+    </nav>
+
+    <div id="tab-overview" class="tab active">
+      <h2>版本中位数对比（各 3 遍）</h2>
+      <div class="tablewrap"><table id="metricTable"></table></div>
+      <h2 id="routing">路由建议（亏损 → 既定杠杆）</h2>
+      <div id="routingCards"></div>
+    </div>
+
+    <div id="tab-timeline" class="tab">
+      <p class="hint">多版本叠加；绿色区=左脚接触、橙色区=右脚接触（以本曲线所属版本的检测为准时仅示意）。</p>
+      <div class="chart" id="chart-mpjpe"></div>
+      <div class="chart" id="chart-sole"></div>
+      <div class="chart" id="chart-speed"></div>
+      <div class="chart" id="chart-drift"></div>
+    </div>
+
+    <div id="tab-feet" class="tab">
+      <p class="hint">实线=机器人，虚线=参考（入场对齐后）。滑动/悬浮段会表现为实线偏离虚线且贴地不稳。</p>
+      <div class="chart wide" id="chart-feet"></div>
+    </div>
+
+    <div id="tab-joints" class="tab">
+      <p class="hint">左：每关节误差 p90（rad，按误差排序）；右：幅度比 std(actual)/std(ref)，&lt;0.8 表示该关节幅度亏损。</p>
+      <div class="chart half" id="chart-jerr"></div>
+      <div class="chart half" id="chart-std"></div>
+    </div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

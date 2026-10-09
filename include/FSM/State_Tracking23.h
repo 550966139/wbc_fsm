@@ -4,10 +4,14 @@
 #include "common/tracking23.h"
 #include <memory>
 #include <onnxruntime_cxx_api.h>
+#include <string>
+#include <vector>
 
 // 23DoF whole-body motion tracking (dance). A separate state keeps the
 // velocity-policy path untouched; it exists only when a tracking config was
-// supplied and its motion CSV loaded (see FSM.cpp).
+// supplied and its motion CSVs loaded (see FSM.cpp). Every configured motion
+// gets its own ONNX session, validated at construction, so a multi-dance
+// library is fully checked before the DDS publisher can start.
 class State_Tracking23 final : public FSMState {
 public:
   explicit State_Tracking23(CtrlComponents *components);
@@ -17,15 +21,21 @@ public:
   FSMStateName checkChange() override;
 
 private:
-  g1::Joints23 infer(g1::ObservationTracking23 &observation);
+  g1::Joints23 infer(g1::ObservationTracking23 &observation, std::size_t motionIndex);
   g1::Quat23 currentRobotAnchor() const;
   // Operator-abort handoff: one-shot gate evaluation (no settle window —
   // a mid-dance pose cannot settle into the policy entry gate anyway).
   FSMStateName handoff(const char *reason);
+  struct TrackingSession {
+    std::unique_ptr<Ort::Session> session;
+    std::string inputName, outputName;
+  };
   Ort::Env env_{ORT_LOGGING_LEVEL_WARNING, "g1-tracking23"};
   Ort::SessionOptions options_;
-  std::unique_ptr<Ort::Session> session_;
-  std::string inputName_, outputName_;
+  std::vector<TrackingSession> sessions_;
+  // Motion slot active for the current episode; chosen at enter() from
+  // CtrlComponents::nextTrackingMotion (R2+B -> 0, R2+Y -> 1).
+  std::size_t motionIndex_ = 0;
   g1::Joints23 lastAction_{};
   std::size_t cursor_ = 0;
   // Entry target ramp-in: commands blend from the measured pose at enter()

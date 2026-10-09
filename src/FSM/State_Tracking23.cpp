@@ -17,44 +17,55 @@ void requireShape(const Ort::ConstTensorTypeAndShapeInfo &tensor, int64_t width,
 
 State_Tracking23::State_Tracking23(CtrlComponents *components)
     : FSMState(components, FSMStateName::TRACKING, "23DoF motion tracking") {
-  if (!components->configTracking23 || !components->trackingMotion)
-    throw std::runtime_error("23DoF tracking requires a tracking config and a loaded motion");
+  if (!components->configTracking23 || components->trackingMotions.empty())
+    throw std::runtime_error("23DoF tracking requires a tracking config and loaded motions");
   const auto &config = components->configTracking23.value();
-  if (!std::filesystem::is_regular_file(config.model))
-    throw std::runtime_error("23DoF tracking policy missing: " + config.model.string() +
-                             "; provide a matching trained 124-input / 23-output model");
   options_.SetIntraOpNumThreads(1);
   options_.SetInterOpNumThreads(1);
   options_.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
   options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
-  session_ = std::make_unique<Ort::Session>(env_, config.model.c_str(), options_);
-  if (session_->GetInputCount() != 1 || session_->GetOutputCount() != 1)
-    throw std::runtime_error(
-        "23DoF tracking policy must have one observation input and one action output");
-  requireShape(session_->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo(), 124, "input");
-  requireShape(session_->GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo(), 23, "output");
   Ort::AllocatorWithDefaultOptions allocator;
-  inputName_ = session_->GetInputNameAllocated(0, allocator).get();
-  outputName_ = session_->GetOutputNameAllocated(0, allocator).get();
+  for (std::size_t slot = 0; slot < config.motions.size(); ++slot) {
+    const auto &entry = config.motions[slot];
+    if (!std::filesystem::is_regular_file(entry.model))
+      throw std::runtime_error("23DoF tracking policy missing for motion \"" + entry.name +
+                               "\": " + entry.model.string() +
+                               "; provide a matching trained 124-input / 23-output model");
+    TrackingSession s;
+    s.session = std::make_unique<Ort::Session>(env_, entry.model.c_str(), options_);
+    if (s.session->GetInputCount() != 1 || s.session->GetOutputCount() != 1)
+      throw std::runtime_error("23DoF tracking policy must have one observation input and one "
+                               "action output (motion \"" +
+                               entry.name + "\")");
+    requireShape(s.session->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo(), 124, "input");
+    requireShape(s.session->GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo(), 23, "output");
+    s.inputName = s.session->GetInputNameAllocated(0, allocator).get();
+    s.outputName = s.session->GetOutputNameAllocated(0, allocator).get();
+    sessions_.push_back(std::move(s));
+  }
 
   // Validate executable output on motion frame 0 before the DDS publisher can
   // be started; the anchor terms use identity robot orientation.
-  const auto *motion = components->trackingMotion.get();
-  const float *quat0 = motion->anchorQuat(0);
-  auto observation = g1::observationTracking23(
-      motion->jointPos(0), motion->jointVel(0), {1.f, 0.f, 0.f, 0.f},
-      {quat0[0], quat0[1], quat0[2], quat0[3]}, {}, config.defaults, {}, config.defaults, {});
-  (void)infer(observation);
+  for (std::size_t slot = 0; slot < config.motions.size(); ++slot) {
+    const auto *motion = components->trackingMotions[slot].get();
+    const float *quat0 = motion->anchorQuat(0);
+    auto observation = g1::observationTracking23(
+        motion->jointPos(0), motion->jointVel(0), {1.f, 0.f, 0.f, 0.f},
+        {quat0[0], quat0[1], quat0[2], quat0[3]}, {}, config.defaults, {}, config.defaults, {});
+    (void)infer(observation, slot);
+  }
 }
 
-g1::Joints23 State_Tracking23::infer(g1::ObservationTracking23 &observation) {
+g1::Joints23 State_Tracking23::infer(g1::ObservationTracking23 &observation,
+                                     std::size_t motionIndex) {
+  const auto &s = sessions_[motionIndex];
   const std::array<int64_t, 2> shape{1, 124};
   const auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
   auto input = Ort::Value::CreateTensor<float>(memory, observation.data(), observation.size(),
                                                shape.data(), shape.size());
-  const char *inputs[] = {inputName_.c_str()};
-  const char *outputs[] = {outputName_.c_str()};
-  auto result = session_->Run(Ort::RunOptions{nullptr}, inputs, &input, 1, outputs, 1);
+  const char *inputs[] = {s.inputName.c_str()};
+  const char *outputs[] = {s.outputName.c_str()};
+  auto result = s.session->Run(Ort::RunOptions{nullptr}, inputs, &input, 1, outputs, 1);
   if (result.size() != 1 || !result[0].IsTensor())
     throw std::runtime_error("23DoF tracking policy produced a non-tensor action");
   const auto info = result[0].GetTensorTypeAndShapeInfo();
@@ -71,6 +82,8 @@ g1::Joints23 State_Tracking23::infer(g1::ObservationTracking23 &observation) {
 
 void State_Tracking23::enter() {
   const auto &config = _ctrlComp->configTracking23.value();
+  motionIndex_ = std::min(_ctrlComp->nextTrackingMotion, config.motions.size() - 1);
+  const auto &entry = config.motions[motionIndex_];
   cursor_ = 0;
   finished_ = false;
   settling_ = false;
@@ -84,14 +97,15 @@ void State_Tracking23::enter() {
   // arbitrary yaw, the reference is MuJoCo z-up; rotate the whole reference by
   // the yaw offset measured at this entry, applied per frame in run().
   const auto robotAnchor = currentRobotAnchor();
-  const float *ref0 = _ctrlComp->trackingMotion->anchorQuat(0);
+  const float *ref0 = _ctrlComp->trackingMotions[motionIndex_]->anchorQuat(0);
   entryAlign_ = g1::quatAboutZ23(g1::yawOf23(robotAnchor) -
                                  g1::yawOf23({ref0[0], ref0[1], ref0[2], ref0[3]}));
-  _ctrlComp->safety.overrideCommandGuards(config.maxTrackingError, config.maxTargetStep);
-  std::cout << "[FSM] tracking " << _ctrlComp->trackingMotion->frameCount() << " motion frames"
-            << (config.loopMotion ? " (looping)" : "") << "; R2+B aborts to "
-            << (config.motionEndTarget == g1::MotionEndTarget::Stand ? "fixed stand"
-                                                                     : "the velocity policy")
+  _ctrlComp->safety.overrideCommandGuards(entry.maxTrackingError, entry.maxTargetStep);
+  std::cout << "[FSM] tracking \"" << entry.name << "\" "
+            << _ctrlComp->trackingMotions[motionIndex_]->frameCount() << " motion frames"
+            << (entry.loopMotion ? " (looping)" : "") << "; R2+B aborts to "
+            << (entry.motionEndTarget == g1::MotionEndTarget::Stand ? "fixed stand"
+                                                                    : "the velocity policy")
             << std::endl;
 }
 
@@ -103,7 +117,8 @@ g1::Quat23 State_Tracking23::currentRobotAnchor() const {
 
 void State_Tracking23::run() {
   const auto &config = _ctrlComp->configTracking23.value();
-  const auto &motion = *_ctrlComp->trackingMotion;
+  const auto &entry = config.motions[motionIndex_];
+  const auto &motion = *_ctrlComp->trackingMotions[motionIndex_];
   const float *refQuat = motion.anchorQuat(cursor_);
   const auto refAligned =
       g1::quatMul23(entryAlign_, {refQuat[0], refQuat[1], refQuat[2], refQuat[3]});
@@ -112,7 +127,7 @@ void State_Tracking23::run() {
       motion.jointPos(cursor_), motion.jointVel(cursor_), currentRobotAnchor(), refAligned,
       {gyro[0], gyro[1], gyro[2]}, _ctrlComp->positions23(), _ctrlComp->velocities23(),
       config.defaults, lastAction_);
-  const auto actions = infer(observation);
+  const auto actions = infer(observation, motionIndex_);
   auto target = g1::clampTargets23(g1::actionTargets23(actions, config.scale, config.defaults),
                                    config.lower, config.upper);
   if (rampCycle_ < g1::kTrackingEntryRampCycles) {
@@ -140,8 +155,8 @@ void State_Tracking23::run() {
         worst = i;
       }
     }
-    std::cout << "[track] f=" << cursor_ << "/" << motion.frameCount() << " worst j" << worst
-              << " e" << worstErr << " q=";
+    std::cout << "[track:" << entry.name << "] f=" << cursor_ << "/" << motion.frameCount()
+              << " worst j" << worst << " e" << worstErr << " q=";
     for (std::size_t i = 0; i < g1::kPolicyDof; ++i)
       std::cout << (i ? " " : "") << measured[i];
     std::cout << "\n";
@@ -151,7 +166,7 @@ void State_Tracking23::run() {
     // the stance pose while checkChange re-evaluates the entry gate.
     settleElapsed_ += config.dt;
   } else if (++cursor_ >= motion.frameCount()) {
-    if (config.loopMotion) {
+    if (entry.loopMotion) {
       cursor_ = 0;
     } else {
       finished_ = true;
@@ -178,10 +193,18 @@ void State_Tracking23::exit() {
 FSMStateName State_Tracking23::checkChange() {
   if (_lowState->userCmd == UserCommand::R2_B)
     return handoff("R2+B: aborting tracking"); // one-shot gate, no settle window
+  if (_lowState->userCmd == UserCommand::R2_Y) {
+    // Second-motion select mid-dance: switching references mid-flight is not
+    // a supported transition; abort with R2+B first.
+    std::cout << "[FSM] R2+Y ignored while tracking motion \""
+              << _ctrlComp->configTracking23->motions[motionIndex_].name
+              << "\": abort with R2+B before selecting another motion" << std::endl;
+    return FSMStateName::TRACKING;
+  }
   if (!finished_)
     return FSMStateName::TRACKING;
-  const auto &config = _ctrlComp->configTracking23.value();
-  if (config.motionEndTarget == g1::MotionEndTarget::Stand) {
+  const auto &entry = _ctrlComp->configTracking23.value().motions[motionIndex_];
+  if (entry.motionEndTarget == g1::MotionEndTarget::Stand) {
     std::cout << "[FSM] tracking motion complete, returning to fixed stand" << std::endl;
     return FSMStateName::FIXEDSTAND;
   }
@@ -194,7 +217,7 @@ FSMStateName State_Tracking23::checkChange() {
     std::cout << "[FSM] tracking motion complete, handing off to the velocity policy" << std::endl;
     return FSMStateName::LOCO;
   }
-  if (settleElapsed_ >= config.handoffSettleTimeout) {
+  if (settleElapsed_ >= entry.handoffSettleTimeout) {
     std::cout << "[FSM] policy entry gate still failing after " << settleElapsed_
               << " s: worst joint " << gate.worstJoint << " error " << gate.worstError
               << " rad, max |dq| " << gate.worstVelocity << "; returning to fixed stand"
@@ -212,7 +235,8 @@ FSMStateName State_Tracking23::checkChange() {
 }
 
 FSMStateName State_Tracking23::handoff(const char *reason) {
-  if (_ctrlComp->configTracking23->motionEndTarget == g1::MotionEndTarget::Stand) {
+  const auto &entry = _ctrlComp->configTracking23->motions[motionIndex_];
+  if (entry.motionEndTarget == g1::MotionEndTarget::Stand) {
     std::cout << "[FSM] " << reason << ", returning to fixed stand" << std::endl;
     return FSMStateName::FIXEDSTAND;
   }

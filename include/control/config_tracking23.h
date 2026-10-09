@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <set>
 
 namespace g1 {
 // Where State_Tracking23 hands off when the motion completes or is aborted:
@@ -10,17 +11,13 @@ namespace g1 {
 // outro ends at the stance pose inside the policy entry gate), or fixed stand
 // as the fallback for bring-up.
 enum class MotionEndTarget { Policy23, Stand };
-// Strict loader for the 23DoF motion-tracking policy configuration. The shared
-// robot contract (defaults, limits, gains, action scale) intentionally mirrors
-// config/g1_23dof.json: the velocity and tracking training tasks use the same
-// robot config, and commands go through the same setTargets23/validateCommand
-// policy form. Only the two command guards are swapped per state at runtime.
-struct ConfigTracking23 {
-  Joints23 defaults{}, kp{}, kd{}, scale{}, lower{}, upper{};
+
+// One deployable dance: its own ONNX policy, motion CSV, calibrated command
+// guards, entry-gate thresholds and end-of-motion behaviour. Guards are
+// per-policy calibrations (replay_tracking23.py), never shared across motions.
+struct TrackingMotion23 {
+  std::string name;
   std::filesystem::path model, motion;
-  float dt = .02f;
-  // Pending recalibration from offline ONNX replay once the real tracking
-  // policy is trained; initialized to the velocity policy's calibrated values.
   float maxTrackingError = 1.5f, maxTargetStep = 1.f;
   float entryMaxJointError = .15f, entryMaxJointVel = 1.f;
   MotionEndTarget motionEndTarget = MotionEndTarget::Policy23;
@@ -30,6 +27,25 @@ struct ConfigTracking23 {
   // pass anyway).
   float handoffSettleTimeout = 3.f;
   bool loopMotion = false;
+};
+
+// Strict loader for the 23DoF motion-tracking policy configuration. The shared
+// robot contract (defaults, limits, gains, action scale) intentionally mirrors
+// config/g1_23dof.json: the velocity and tracking training tasks use the same
+// robot config, and commands go through the same setTargets23/validateCommand
+// policy form. Only the two command guards are swapped per state at runtime.
+//
+// The configuration names either one motion through the legacy top-level
+// model_path/motion_path keys or several through a "motions" array (the two
+// forms are mutually exclusive). Array entries carry their own
+// model_path/motion_path/name and may override the top-level safety,
+// entry_gate, motion_end_target, handoff_settle_timeout and loop_motion
+// values; the top-level values remain the defaults and keep their validation.
+struct ConfigTracking23 {
+  Joints23 defaults{}, kp{}, kd{}, scale{}, lower{}, upper{};
+  float dt = .02f;
+  static constexpr std::size_t kMaxMotions = 4;
+  std::vector<TrackingMotion23> motions;
   static ConfigTracking23 load(const std::filesystem::path &path) {
     std::ifstream file(path);
     if (!file)
@@ -74,51 +90,115 @@ struct ConfigTracking23 {
     c.dt = j.at("step_dt");
     if (!std::isfinite(c.dt) || std::abs(c.dt - .02f) > 1e-6f)
       throw std::runtime_error("invalid tracking policy timestep");
+    // Top-level command guards and entry gate: defaults every motion inherits
+    // unless it carries its own override block.
+    TrackingMotion23 defaults;
     const auto &s = j.at("safety");
-    c.maxTrackingError = s.at("max_tracking_error");
-    c.maxTargetStep = s.at("max_target_step");
-    for (float v : {c.maxTrackingError, c.maxTargetStep})
-      if (!std::isfinite(v) || v <= 0)
-        throw std::runtime_error("invalid tracking safety limit");
+    defaults.maxTrackingError = s.at("max_tracking_error");
+    defaults.maxTargetStep = s.at("max_target_step");
     const auto &e = j.at("entry_gate");
-    c.entryMaxJointError = e.at("entry_max_joint_error");
-    c.entryMaxJointVel = e.at("entry_max_joint_vel");
-    if (!std::isfinite(c.entryMaxJointError) || c.entryMaxJointError <= 0 ||
-        c.entryMaxJointError > 1.f || !std::isfinite(c.entryMaxJointVel) ||
-        c.entryMaxJointVel <= 0 || c.entryMaxJointVel > 30.f)
-      throw std::runtime_error("invalid tracking entry gate thresholds");
-    if (j.contains("motion_end_target")) {
-      if (!j.at("motion_end_target").is_string())
+    defaults.entryMaxJointError = e.at("entry_max_joint_error");
+    defaults.entryMaxJointVel = e.at("entry_max_joint_vel");
+    auto motionEndTargetOf = [](const nlohmann::json &node) {
+      if (!node.is_string())
         throw std::runtime_error("motion_end_target must be a string");
-      const auto target = j.at("motion_end_target").get<std::string>();
+      const auto target = node.get<std::string>();
       if (target == "policy23")
-        c.motionEndTarget = MotionEndTarget::Policy23;
-      else if (target == "stand")
-        c.motionEndTarget = MotionEndTarget::Stand;
-      else
-        throw std::runtime_error("unsupported motion_end_target: " + target);
-    }
+        return MotionEndTarget::Policy23;
+      if (target == "stand")
+        return MotionEndTarget::Stand;
+      throw std::runtime_error("unsupported motion_end_target: " + target);
+    };
+    if (j.contains("motion_end_target"))
+      defaults.motionEndTarget = motionEndTargetOf(j.at("motion_end_target"));
     if (j.contains("handoff_settle_timeout")) {
       if (!j.at("handoff_settle_timeout").is_number())
         throw std::runtime_error("handoff_settle_timeout must be a number");
-      c.handoffSettleTimeout = j.at("handoff_settle_timeout");
-      if (!std::isfinite(c.handoffSettleTimeout) || c.handoffSettleTimeout <= 0 ||
-          c.handoffSettleTimeout > 30.f)
-        throw std::runtime_error("invalid handoff settle timeout");
+      defaults.handoffSettleTimeout = j.at("handoff_settle_timeout");
     }
     if (j.contains("loop_motion")) {
       if (!j.at("loop_motion").is_boolean())
         throw std::runtime_error("loop_motion must be a boolean");
-      c.loopMotion = j.at("loop_motion");
+      defaults.loopMotion = j.at("loop_motion");
     }
-    c.model = j.at("model_path").get<std::string>();
-    c.motion = j.at("motion_path").get<std::string>();
-    if (c.model.empty() || c.motion.empty())
-      throw std::runtime_error("empty tracking model or motion path");
-    if (c.model.is_relative())
-      c.model = path.parent_path().parent_path() / c.model;
-    if (c.motion.is_relative())
-      c.motion = path.parent_path().parent_path() / c.motion;
+    // Validates one motion's guard/entry/behaviour override block (or the
+    // inherited defaults) with the same ranges the top-level values obey.
+    auto applyOverrides = [&](TrackingMotion23 &m, const nlohmann::json &node) {
+      if (node.contains("safety")) {
+        const auto &os = node.at("safety");
+        m.maxTrackingError = os.at("max_tracking_error");
+        m.maxTargetStep = os.at("max_target_step");
+      }
+      if (node.contains("entry_gate")) {
+        const auto &oe = node.at("entry_gate");
+        m.entryMaxJointError = oe.at("entry_max_joint_error");
+        m.entryMaxJointVel = oe.at("entry_max_joint_vel");
+      }
+      if (node.contains("motion_end_target"))
+        m.motionEndTarget = motionEndTargetOf(node.at("motion_end_target"));
+      if (node.contains("handoff_settle_timeout")) {
+        if (!node.at("handoff_settle_timeout").is_number())
+          throw std::runtime_error("handoff_settle_timeout must be a number");
+        m.handoffSettleTimeout = node.at("handoff_settle_timeout");
+      }
+      if (node.contains("loop_motion")) {
+        if (!node.at("loop_motion").is_boolean())
+          throw std::runtime_error("loop_motion must be a boolean");
+        m.loopMotion = node.at("loop_motion");
+      }
+      for (float v : {m.maxTrackingError, m.maxTargetStep})
+        if (!std::isfinite(v) || v <= 0)
+          throw std::runtime_error("invalid tracking safety limit");
+      if (!std::isfinite(m.entryMaxJointError) || m.entryMaxJointError <= 0 ||
+          m.entryMaxJointError > 1.f || !std::isfinite(m.entryMaxJointVel) ||
+          m.entryMaxJointVel <= 0 || m.entryMaxJointVel > 30.f)
+        throw std::runtime_error("invalid tracking entry gate thresholds");
+      if (!std::isfinite(m.handoffSettleTimeout) || m.handoffSettleTimeout <= 0 ||
+          m.handoffSettleTimeout > 30.f)
+        throw std::runtime_error("invalid handoff settle timeout");
+    };
+    auto resolvePath = [&](const std::string &value) {
+      std::filesystem::path resolved{value};
+      if (resolved.is_relative())
+        resolved = path.parent_path().parent_path() / resolved;
+      return resolved;
+    };
+    if (j.contains("motions")) {
+      if (j.contains("model_path") || j.contains("motion_path"))
+        throw std::runtime_error(
+            "motions array cannot be combined with legacy top-level model/motion paths");
+      const auto &motions = j.at("motions");
+      if (!motions.is_array() || motions.empty() || motions.size() > kMaxMotions)
+        throw std::runtime_error("motions must be an array of 1..4 motion entries");
+      std::set<std::string> names;
+      for (const auto &node : motions) {
+        TrackingMotion23 m = defaults;
+        if (!node.is_object() || !node.at("name").is_string() ||
+            node.at("name").get<std::string>().empty())
+          throw std::runtime_error("every motion entry needs a non-empty string name");
+        m.name = node.at("name").get<std::string>();
+        if (!names.insert(m.name).second)
+          throw std::runtime_error("duplicate tracking motion name: " + m.name);
+        m.model = resolvePath(node.at("model_path").get<std::string>());
+        m.motion = resolvePath(node.at("motion_path").get<std::string>());
+        if (node.at("model_path").get<std::string>().empty() ||
+            node.at("motion_path").get<std::string>().empty())
+          throw std::runtime_error("empty tracking model or motion path");
+        applyOverrides(m, node);
+        c.motions.push_back(std::move(m));
+      }
+    } else {
+      TrackingMotion23 m = defaults;
+      m.name = "tracking";
+      const auto modelPath = j.at("model_path").get<std::string>();
+      const auto motionPath = j.at("motion_path").get<std::string>();
+      if (modelPath.empty() || motionPath.empty())
+        throw std::runtime_error("empty tracking model or motion path");
+      m.model = resolvePath(modelPath);
+      m.motion = resolvePath(motionPath);
+      applyOverrides(m, j);
+      c.motions.push_back(std::move(m));
+    }
     return c;
   }
 };

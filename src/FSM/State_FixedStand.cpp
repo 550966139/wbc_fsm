@@ -101,30 +101,12 @@ FSMStateName State_FixedStand::checkChange() {
     }
     // return FSMStateName::AMP;
     return FSMStateName::MJAMP;
-  } else if (_lowState->userCmd == UserCommand::R2_B) {
-    if (_ctrlComp->use23()) {
-      if (!_ctrlComp->configTracking23 || !_ctrlComp->trackingMotion) {
-        std::cout << "[FSM] R2+B ignored: tracking policy not available" << std::endl;
-        return FSMStateName::FIXEDSTAND;
-      }
-      if (!_fixedstand_complete_flag) {
-        std::cout << "[FSM] R2+B held: stand interpolation not complete yet" << std::endl;
-        return FSMStateName::FIXEDSTAND;
-      }
-      // Entry gate against the first reference frame of the tracking motion.
-      const auto &tracking = _ctrlComp->configTracking23.value();
-      g1::Joints23 reference{};
-      std::copy_n(_ctrlComp->trackingMotion->jointPos(0), reference.size(), reference.begin());
-      const auto gate =
-          g1::entryGate23(_ctrlComp->positions23(), _ctrlComp->velocities23(), reference);
-      if (!gate.passes(tracking.entryMaxJointError, tracking.entryMaxJointVel)) {
-        std::cout << "[FSM] R2+B rejected: worst joint " << gate.worstJoint << " error "
-                  << gate.worstError << " rad vs motion frame 0, max |dq| " << gate.worstVelocity
-                  << std::endl;
-        return FSMStateName::FIXEDSTAND;
-      }
-      return FSMStateName::TRACKING;
-    }
+  } else if (_lowState->userCmd == UserCommand::R2_B || _lowState->userCmd == UserCommand::R2_Y) {
+    if (_ctrlComp->use23())
+      // Dance entry (R2+B motion 1, R2+Y motion 2): shared availability,
+      // stand-readiness and per-motion frame-0 entry gate.
+      return _ctrlComp->requestTrackingMotion(_lowState->userCmd, _fixedstand_complete_flag,
+                                              FSMStateName::FIXEDSTAND);
     return FSMStateName::FIXEDSTAND;
   } else if (_lowState->userCmd == UserCommand::SELECT) {
     throw std::runtime_error("exit..");

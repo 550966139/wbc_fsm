@@ -7,7 +7,9 @@
 // motion CSV in a temp directory. argv[1]: velocity config, argv[2]: tracking
 // config (motion_end_target "policy23"; its safety guard values differ from
 // the velocity config so the per-state swap is observable), argv[3]: tracking
-// config with motion_end_target "stand".
+// config with motion_end_target "stand", argv[4]: two-motion "motions[]"
+// config (R2+B -> motion one, R2+Y -> motion two with its own guards and a
+// "stand" end target).
 class FakeIO final : public IOInterface {
 public:
   LowlevelState state;
@@ -57,15 +59,20 @@ struct Rig {
 int main(int argc, char **argv) {
   TestSuite suite;
 #define CHECK(expression) suite.check((expression), #expression)
-  if (argc != 4)
+  if (argc != 5)
     return 2;
   auto cfg = g1::Config23::load(argv[1]);
   auto tcfg = g1::ConfigTracking23::load(argv[2]);
   auto tcfgStand = g1::ConfigTracking23::load(argv[3]);
-  CHECK(tcfg.motionEndTarget == g1::MotionEndTarget::Policy23);
-  CHECK(tcfgStand.motionEndTarget == g1::MotionEndTarget::Stand);
-  CHECK(tcfg.maxTargetStep != cfg.safety.maxTargetStep ||
-        tcfg.maxTrackingError != cfg.safety.maxTrackingError);
+  auto tcfgDual = g1::ConfigTracking23::load(argv[4]);
+  CHECK(tcfg.motions[0].motionEndTarget == g1::MotionEndTarget::Policy23);
+  CHECK(tcfgStand.motions[0].motionEndTarget == g1::MotionEndTarget::Stand);
+  CHECK(tcfg.motions[0].maxTargetStep != cfg.safety.maxTargetStep ||
+        tcfg.motions[0].maxTrackingError != cfg.safety.maxTrackingError);
+  CHECK(tcfgDual.motions.size() == 2);
+  CHECK(tcfgDual.motions[1].maxTargetStep != tcfgDual.motions[0].maxTargetStep ||
+        tcfgDual.motions[1].maxTrackingError != tcfgDual.motions[0].maxTrackingError);
+  CHECK(tcfgDual.motions[1].motionEndTarget == g1::MotionEndTarget::Stand);
   Rig rig(cfg);
   rig.components.configureTracking23(tcfg);
   FSM fsm(&rig.components);
@@ -85,9 +92,9 @@ int main(int argc, char **argv) {
   rig.step(fsm, UserCommand::R2_B);
   CHECK(fsm.stateName() == FSMStateName::TRACKING);
   CHECK(!rig.components.safety.latched());
-  suite.near(rig.components.safety.limits().maxTargetStep, tcfg.maxTargetStep,
+  suite.near(rig.components.safety.limits().maxTargetStep, tcfg.motions[0].maxTargetStep,
              "tracking swaps in its own target-step guard");
-  suite.near(rig.components.safety.limits().maxTrackingError, tcfg.maxTrackingError,
+  suite.near(rig.components.safety.limits().maxTrackingError, tcfg.motions[0].maxTrackingError,
              "tracking swaps in its own tracking-error guard");
   for (std::size_t i = 0; i < g1::kPolicyDof; ++i) {
     suite.near(rig.io->sent.motorCmd[g1::kPolicyToMotor[i]].Kp, cfg.kp[i],
@@ -131,7 +138,7 @@ int main(int argc, char **argv) {
   rig.step(fsm);
   rig.step(fsm, UserCommand::R2_B);
   CHECK(fsm.stateName() == FSMStateName::TRACKING);
-  suite.near(rig.components.safety.limits().maxTargetStep, tcfg.maxTargetStep,
+  suite.near(rig.components.safety.limits().maxTargetStep, tcfg.motions[0].maxTargetStep,
              "tracking guards swapped back in after walk->dance entry");
 
   // Operator abort now also hands off to the velocity policy.
@@ -214,5 +221,52 @@ int main(int argc, char **argv) {
   standRig.step(standFsm, UserCommand::R2_B);
   CHECK(standFsm.stateName() == FSMStateName::FIXEDSTAND);
   CHECK(!standRig.components.safety.latched());
+
+  // Single-motion config: R2+Y (dance #2) is inert from stand and from walk.
+  standRig.step(standFsm, UserCommand::R2_Y);
+  CHECK(standFsm.stateName() == FSMStateName::FIXEDSTAND);
+  CHECK(!standRig.components.safety.latched());
+
+  // Dual-motion library: R2+Y enters motion two with ITS guards swapped in;
+  // the per-motion "stand" end target returns to fixed stand on completion.
+  Rig dualRig(cfg);
+  dualRig.components.configureTracking23(tcfgDual);
+  FSM dualFsm(&dualRig.components);
+  dualRig.step(dualFsm);
+  dualRig.stand(dualFsm);
+  dualRig.step(dualFsm, UserCommand::R2_Y);
+  CHECK(dualFsm.stateName() == FSMStateName::TRACKING);
+  CHECK(!dualRig.components.safety.latched());
+  suite.near(dualRig.components.safety.limits().maxTargetStep, tcfgDual.motions[1].maxTargetStep,
+             "motion two swaps in its own target-step guard");
+  suite.near(dualRig.components.safety.limits().maxTrackingError,
+             tcfgDual.motions[1].maxTrackingError,
+             "motion two swaps in its own tracking-error guard");
+  // R2+Y mid-dance does not switch references: abort with R2+B first.
+  dualRig.step(dualFsm);
+  dualRig.step(dualFsm, UserCommand::R2_Y);
+  CHECK(dualFsm.stateName() == FSMStateName::TRACKING);
+  CHECK(!dualRig.components.safety.latched());
+  for (int i = 0; i < 7; ++i)
+    dualRig.step(dualFsm);
+  dualRig.step(dualFsm);
+  CHECK(dualFsm.stateName() == FSMStateName::FIXEDSTAND);
+  CHECK(!dualRig.components.safety.latched());
+  suite.near(dualRig.components.safety.limits().maxTargetStep, cfg.safety.maxTargetStep,
+             "guards restored after motion two ends");
+  // R2+B still selects motion one in the dual config.
+  dualRig.stand(dualFsm);
+  dualRig.step(dualFsm, UserCommand::R2_B);
+  CHECK(dualFsm.stateName() == FSMStateName::TRACKING);
+  suite.near(dualRig.components.safety.limits().maxTargetStep, tcfgDual.motions[0].maxTargetStep,
+             "R2+B keeps selecting motion one's guards");
+  dualRig.step(dualFsm);
+  dualRig.step(dualFsm, UserCommand::R2_B);
+  // Motion one ends with the policy23 handoff, so the abort goes to LOCO
+  // (dance-two's "stand" end target above covered the FIXEDSTAND path).
+  CHECK(dualFsm.stateName() == FSMStateName::LOCO);
+  CHECK(!dualRig.components.safety.latched());
+  suite.near(dualRig.components.safety.limits().maxTargetStep, cfg.safety.maxTargetStep,
+             "guards restored after motion one abort");
   return suite.result();
 }

@@ -29,8 +29,6 @@
     26
   ],
   "step_dt": 0.02,
-  "model_path": "model/g1_23dof_tracking/policy.onnx",
-  "motion_path": "model/g1_23dof_tracking/motion.csv",
   "default_joint_pos": [
     -0.1,
     0,
@@ -191,5 +189,21 @@
   },
   "motion_end_target": "stand",
   "handoff_settle_timeout": 3.0,
-  "loop_motion": false
+  "loop_motion": false,
+  "motions": [
+    {
+      "name": "take6-F10",
+      "model_path": "model/g1_23dof_tracking/policy.onnx",
+      "motion_path": "model/g1_23dof_tracking/motion.csv"
+    },
+    {
+      "name": "take2-F2",
+      "model_path": "model/g1_23dof_tracking/policy_take2f2_115000.onnx",
+      "motion_path": "model/g1_23dof_tracking/motion_take2f2_115000.csv",
+      "safety": {
+        "max_target_step": 1.7,
+        "max_tracking_error": 4.0
+      }
+    }
+  ]
 }

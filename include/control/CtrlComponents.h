@@ -1,14 +1,18 @@
 #ifndef CTRLCOMPONENTS_H
 #define CTRLCOMPONENTS_H
 
+#include "common/enumClass.h"
 #include "common/motion_csv.h"
 #include "control/config23.h"
 #include "control/config_tracking23.h"
 #include "interface/IOInterface.h"
 #include "message/LowlevelCmd.h"
 #include "message/LowlevelState.h"
+#include <algorithm>
+#include <iostream>
 #include <memory>
 #include <optional>
+#include <vector>
 
 struct CtrlComponents {
   explicit CtrlComponents(IOInterface *io) : ioInter(io) {
@@ -33,10 +37,15 @@ struct CtrlComponents {
   control::SafetySupervisor safety;
   std::optional<g1::Config23> config23;
   // Optional motion-tracking (dance) contract: present only when a tracking
-  // config was supplied and its motion CSV loaded; the FSM constructs
+  // config was supplied and its motion CSVs loaded; the FSM constructs
   // State_Tracking23 only then, so the velocity path is unchanged otherwise.
+  // All configured motions load together — a dance library, never a partial
+  // one — and each entry keeps its own calibrated guards.
   std::optional<g1::ConfigTracking23> configTracking23;
-  std::shared_ptr<const g1::MotionCsv23> trackingMotion;
+  std::vector<std::shared_ptr<const g1::MotionCsv23>> trackingMotions;
+  // Motion slot chosen by the last accepted dance-entry request (R2+B -> 0,
+  // R2+Y -> 1); State_Tracking23::enter() consumes it for the whole episode.
+  std::size_t nextTrackingMotion = 0;
 
   void configure23(const g1::Config23 &config) {
     config23 = config;
@@ -45,12 +54,53 @@ struct CtrlComponents {
     setDampingCommand();
   }
   void configureTracking23(const g1::ConfigTracking23 &config) {
-    // Load the motion first: on failure the config is not installed and the
+    // Load every motion first: on any failure nothing is installed and the
     // tracking state stays unavailable instead of half-configured.
-    trackingMotion = std::make_shared<const g1::MotionCsv23>(g1::MotionCsv23::load(config.motion));
+    std::vector<std::shared_ptr<const g1::MotionCsv23>> motions;
+    motions.reserve(config.motions.size());
+    for (const auto &entry : config.motions)
+      motions.push_back(
+          std::make_shared<const g1::MotionCsv23>(g1::MotionCsv23::load(entry.motion)));
+    trackingMotions = std::move(motions);
     configTracking23 = config;
   }
   bool use23() const { return config23.has_value(); }
+
+  // Shared dance-entry gate for R2+B (motion slot 0) and R2+Y (slot 1),
+  // called from FixedStand and the velocity policy: checks availability,
+  // stand readiness and the per-motion frame-0 entry gate with that motion's
+  // own thresholds; on success records the slot for State_Tracking23::enter()
+  // and returns TRACKING, otherwise logs the reason and returns the caller's
+  // fallback state.
+  FSMStateName requestTrackingMotion(UserCommand command, bool standReady, FSMStateName fallback) {
+    const char *combo = command == UserCommand::R2_Y ? "R2+Y" : "R2+B";
+    if (!configTracking23 || trackingMotions.empty()) {
+      std::cout << "[FSM] " << combo << " ignored: tracking policy not available" << std::endl;
+      return fallback;
+    }
+    const std::size_t slot = command == UserCommand::R2_Y ? 1 : 0;
+    if (slot >= configTracking23->motions.size()) {
+      std::cout << "[FSM] " << combo << " ignored: tracking motion " << slot + 1
+                << " not configured" << std::endl;
+      return fallback;
+    }
+    if (!standReady) {
+      std::cout << "[FSM] " << combo << " held: stand interpolation not complete yet" << std::endl;
+      return fallback;
+    }
+    const auto &entry = configTracking23->motions[slot];
+    g1::Joints23 reference{};
+    std::copy_n(trackingMotions[slot]->jointPos(0), reference.size(), reference.begin());
+    const auto gate = g1::entryGate23(positions23(), velocities23(), reference);
+    if (!gate.passes(entry.entryMaxJointError, entry.entryMaxJointVel)) {
+      std::cout << "[FSM] " << combo << " rejected: worst joint " << gate.worstJoint << " error "
+                << gate.worstError << " rad vs motion \"" << entry.name << "\" frame 0, max |dq| "
+                << gate.worstVelocity << std::endl;
+      return fallback;
+    }
+    nextTrackingMotion = slot;
+    return FSMStateName::TRACKING;
+  }
 
   // State-entry reseeding of the target-step guard: the first active command
   // validated after an FSM state entry measures the step against the current
@@ -175,7 +225,8 @@ struct CtrlComponents {
         if (c.Kp != standGain23(config23->kp[i], config23->standKp[i], standBlend_) ||
             c.Kd != standGain23(config23->kd[i], config23->standKd[i], standBlend_) ||
             c.tau != standTau23(config23->standFf[i], standBlend_))
-          throw std::runtime_error("23DoF gains or feedforward differ from policy or stand contract");
+          throw std::runtime_error(
+              "23DoF gains or feedforward differ from policy or stand contract");
         targets[i] = c.q;
       }
       const auto measured = positions23();
@@ -196,9 +247,7 @@ private:
   static float standGain23(float policyGain, float standGain, float blend) {
     return (1.f - blend) * policyGain + blend * standGain;
   }
-  static float standTau23(float standFeedforward, float blend) {
-    return blend * standFeedforward;
-  }
+  static float standTau23(float standFeedforward, float blend) { return blend * standFeedforward; }
   g1::Joints23 previousTargets_{};
   bool previousActive_ = false;
   bool seedBaseline_ = false;
