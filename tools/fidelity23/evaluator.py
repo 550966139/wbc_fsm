@@ -46,6 +46,7 @@ FLOAT_HEIGHT = 0.005             # m
 MPJPE_SUCCESS = 0.15             # m, segment-success bar
 SUB = 6                          # 900 Hz -> 150 Hz working rate
 SERIES_SUB = 15                  # -> 10 Hz stored series
+LEG_JOINTS = list(range(12))     # policy order j0-11 = both legs
 
 # Motion-structure layout: segments / kick window / ending-drift start are
 # take6 values and the DEFAULT for any version whose meta.json does not carry
@@ -60,8 +61,9 @@ def layout_from_meta(meta):
     segs = [(s[0], float(s[1]), float(s[2])) for s in (meta.get("segments") or DEFAULT_SEGMENTS)]
     if not segs:
         raise ValueError("empty segments in meta.json")
-    end = segs[-1][2]
-    return {"segments": segs,
+    end = max(s[2] for s in segs)   # turn sub-windows may be listed after the finale
+    turns = [(f"turn{i + 1}", float(a), float(b)) for i, (a, b) in enumerate(meta.get("turn_windows") or [])]
+    return {"segments": segs, "turns": turns,
             "kick_window": tuple(float(v) for v in meta.get("kick_window", DEFAULT_KICK_WINDOW)),
             "ending_drift_from": float(meta.get("ending_drift_from", DEFAULT_ENDING_DRIFT_FROM)),
             "dance_start": 0.6, "dance_end": end - 0.6, "series_end": end + 1.4}
@@ -247,6 +249,40 @@ def evaluate(capture_npz, rig, t_entry=None):
     ankmin = float(min(qw23[dance, 4].min(), qw23[dance, 10].min()))
     ankle_margin = ankmin - ANK_LIMIT
 
+    # root-XY error vs the (entry-aligned) reference root + turn-window attribution
+    root_err = np.linalg.norm(ppos[:, :2] - refb[:, 0, :2], axis=1)
+    ref_yaw_t = rig.ref_root_yaw[fr]
+    yaw_err = (robot_yaw - ref_yaw_t + np.pi) % (2 * np.pi) - np.pi
+    turns = {}
+    for nm, a, b in lay["turns"]:
+        m = (tdw >= a) & (tdw < b)
+        if int(m.sum()) < 4:
+            continue
+        ii = np.where(m)[0]
+        lw = m & dance
+        leg_std = [float(np.std(qw23[lw, j]) / max(np.std(refq[lw, j]), 1e-6))
+                   for j in LEG_JOINTS] if int(lw.sum()) > 8 else [float("nan")]
+        turns[nm] = {
+            "root_path_m": float(np.linalg.norm(np.diff(ppos[ii, :2], axis=0), axis=1).sum()),
+            "ref_path_m": float(np.linalg.norm(np.diff(refb[ii, 0, :2], axis=0), axis=1).sum()),
+            "root_net_m": float(np.linalg.norm(ppos[ii[-1], :2] - ppos[ii[0], :2])),
+            "root_err_end_m": float(root_err[ii[-1]]), "root_err_p50_m": pct(root_err[m], 50),
+            "yaw_delta_deg": float(np.degrees(np.diff(np.unwrap(robot_yaw[ii])).sum())),
+            "ref_yaw_delta_deg": float(np.degrees(np.diff(np.unwrap(ref_yaw_t[ii])).sum())),
+            "yaw_err_end_deg": float(np.degrees(yaw_err[ii[-1]])),
+            "leg_std_ratio_p50": float(np.median(leg_std)),
+            "leg_err_p50": pct(jerr[lw][:, LEG_JOINTS].max(axis=1), 50) if int(lw.sum()) else float("nan"),
+        }
+    di = np.where(dance)[0]
+    whole_root = {"net_vs_ref_m": float("nan"), "p50_vs_ref_m": float("nan"),
+                  "net_m": float("nan"), "path_m": float("nan"), "ref_path_m": float("nan")}
+    if len(di):
+        whole_root = {"net_vs_ref_m": float(root_err[di[-1]]),
+                      "p50_vs_ref_m": pct(root_err[dance], 50),
+                      "net_m": float(np.linalg.norm(ppos[di[-1], :2] - ppos[di[0], :2])),
+                      "path_m": float(np.linalg.norm(np.diff(ppos[di, :2], axis=0), axis=1).sum()),
+                      "ref_path_m": float(np.linalg.norm(np.diff(refb[di, 0, :2], axis=0), axis=1).sum())}
+
     segments = {}
     for nm, a, b in lay["segments"]:
         m = (tdw >= a) & (tdw < b)
@@ -272,6 +308,10 @@ def evaluate(capture_npz, rig, t_entry=None):
         "xyL": (xyL[sidx][sm]).tolist(), "xyR": (xyR[sidx][sm]).tolist(),
         "refxyL": (refb[sidx][sm, rig.foot_bodies["l"], :2]).tolist(),
         "refxyR": (refb[sidx][sm, rig.foot_bodies["r"], :2]).tolist(),
+        "rootXY": (ppos[sidx][sm][:, :2]).tolist(),
+        "refXY": (refb[sidx][sm, 0, :2]).tolist(),
+        "rootErr": (root_err[sidx][sm]).tolist(),
+        "yawErrDeg": (np.degrees(yaw_err[sidx][sm])).tolist(),
     }
 
     summary = {
@@ -283,6 +323,7 @@ def evaluate(capture_npz, rig, t_entry=None):
         "penetration": penetration, "float": fl,
         "kick_apex_cm": apex, "kick_apex_ratio": apex_ratio,
         "ending_drift_m": drift, "ankle_margin_rad": ankle_margin,
+        "whole_dance_root": whole_root, "turns": turns,
         "joint_err_p50_max": float(max(joints["err_p50"])),
         "dance_samples": int(dance.sum()),
     }
@@ -308,6 +349,18 @@ def routing(m):
         out.append({"severity": "high", "area": "结尾漂移",
                     "evidence": f"净漂移 {s['ending_drift_m']['net']:.2f} m（阈值 1 m）",
                     "suggestion": "结尾失稳走位：F13 宽 std 臂项已验证可修（0.83 m），代价踢腿 86→73%。"})
+    for tn, tv in (s.get("turns") or {}).items():
+        if tv.get("root_err_end_m", 0) == tv.get("root_err_end_m", 0) and tv["root_err_end_m"] > 0.5:
+            out.append({"severity": "high", "area": f"转身漂移({tn})",
+                        "evidence": f"窗口末根误差 {tv['root_err_end_m']:.2f} m；机器人路径 {tv['root_path_m']:.2f} m vs 参考 {tv['ref_path_m']:.2f} m；终末 yaw 误差 {tv['yaw_err_end_deg']:.0f}°",
+                        "suggestion": "转身段根失跟：观测无根位置（结构性开环），优先腿关节跟踪修复（F17）让脚步落地；仍超 0.5 m 再立观测 v2。"})
+            break
+    tls = [v.get("leg_std_ratio_p50") for v in (s.get("turns") or {}).values()]
+    tls = [v for v in tls if v == v]
+    if tls and min(tls) < 0.75:
+        out.append({"severity": "medium", "area": "转身腿幅度",
+                    "evidence": f"转身窗口腿 std_ratio p50 最低 {min(tls):.2f}（阈值 0.75）",
+                    "suggestion": "转身段腿欠跟踪：F17 腿关节 joint-space 跟踪项的直接靶标。"})
     if s["float"]["L"]["duration_frac"] > 0.15 or s["float"]["R"]["duration_frac"] > 0.15:
         out.append({"severity": "medium", "area": "接触悬浮",
                     "evidence": f"悬浮时长占比 L {s['float']['L']['duration_frac']*100:.0f}% / R {s['float']['R']['duration_frac']*100:.0f}%",
@@ -329,10 +382,14 @@ def main():
     ap.add_argument("--data-root", default=os.path.join(os.path.dirname(__file__), "data"))
     ap.add_argument("--xml", default=os.path.expanduser("~/sim2sim_g1/unitree_rl_mjlab/src/assets/robots/unitree_g1/xmls/g1_23dof.xml"))
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--only", default="", help="comma-separated version dirs to (re)evaluate")
     args = ap.parse_args()
+    only = [v.strip() for v in args.only.split(",") if v.strip()]
     runs_root = os.path.join(args.data_root, "runs")
     refs = os.path.join(args.data_root, "refs")
     for ver in sorted(os.listdir(runs_root)):
+        if only and ver not in only:
+            continue
         vdir = os.path.join(runs_root, ver)
         meta_p = os.path.join(vdir, "meta.json")
         if not os.path.isdir(vdir) or not os.path.exists(meta_p):
@@ -358,9 +415,12 @@ def main():
             m["routing"] = routing(m)
             json.dump(m, open(out_p, "w"), ensure_ascii=False, indent=1)
             s = m["summary"]
+            te_max = max([v.get("root_err_end_m", float("nan")) for v in (s.get("turns") or {}).values()],
+                         default=float("nan"))
+            te_txt = f" turn_err_end {te_max:.2f}m" if te_max == te_max else ""
             print(f"{ver}/{tag}: mpjpe {s['mpjpe_world_p50']:.3f}m FSR L/R {s['fsr_L']*100:.0f}/{s['fsr_R']*100:.0f}% "
                   f"apex {s['kick_apex_ratio']['L']*100:.0f}% drift {s['ending_drift_m']['net']:.2f}m "
-                  f"ankle {s['ankle_margin_rad']:.3f} t_entry {m['t_entry_source']} ({time.time()-t0:.0f}s)")
+                  f"ankle {s['ankle_margin_rad']:.3f}{te_txt} t_entry {m['t_entry_source']} ({time.time()-t0:.0f}s)")
 
 
 if __name__ == "__main__":
