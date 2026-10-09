@@ -760,3 +760,23 @@ Whole-dance maxima for comparison: knee 137° / 636°/s, hip_pitch 80° / 397°/
 - Fallback recipe CORRECTION (if F17 fails): the planned "leg-chain body_pos std 0.3→0.22" is OFF — F11/F12 already proved sharp world-frame leg body-pos drives ankle fold (0.09→0.37 rad). Correct single-variable fallback: F3's wide-std legs term ISOLATED (std 1.0, w 1.0, no root-tighten) — the arms precedent says wide std keeps gradient alive at large excursions, and F3's failure is attributable to the root-tighten confound plus undertraining, not necessarily to the leg term alone.
 
 **Next steps when F17 finishes (~7 h, ETA late 2026-10-09)**: export via `scripts/export_from_ckpt.py` → `replay_tracking23.py --write` guard recalibration → local accept 3/3 (protocol `~/sim2sim_g1/accept/`, staging under `~/sim2sim_g1/` — NEVER /tmp) → fidelity23 with the new turn metrics vs the baselines above → turn-push eval on the F17 checkpoint (bar: turn1 ≤20 %) → verdict per pre-registration; PC2 swap only at a user-scheduled attended session.
+
+### F17 verdict (2026-10-10 00:30): REJECTED on pre-registration — F2 stays; the leg mechanism is validated, drift moved to the front of the queue
+
+**Training completed** (145000/145001, 6h51m): final mean reward 160.5 (F2 ~147), error_joint_pos oscillating 0.50-0.88 (still not settled — the reason for the F17b continuation below). Export sha verified path: `~/dsh-workspace/take2_pipeline/policy_take2f17_145000.onnx`; guards from offline replay: envelopes step 1.070 / err 2.953 ×1.5 → **1.7 / 4.5** (staging `~/sim2sim_g1/f17_staging/`, motion CSV = the unchanged take2 chain).
+
+**Acceptance: 2/3, one REAL mid-dance latch** — r1/r3 full-dance f=2900 with only the known post-complete FixedStand tilt artifact; **r2 latched at t≈26 s (`excessive joint target step`, joint 6 r_hip_pitch 1.95 rad in one cycle)** after a poor turn1 (r2 turn1 mpjpe 0.438; r3 0.456; r1 0.264 — turn1 remains the high-variance window; the r2 divergence grew from there).
+
+**fidelity23 vs pre-registered bars** (r1/r3; r2 partial after latch):
+- 3/3 zero-latch: **FAIL** (2/3). MPJPE ≤0.18: **FAIL** (0.196/0.217; F2 0.164-0.177). ankle margin ≥0.15: marginal FAIL (0.145-0.147). apex ≥80 %: PASS (86 %).
+- turn leg std_ratio ≥0.75: **PASS everywhere** (turn1 0.78-0.80, turn2 0.89, turn3 0.82; whole-dance legs 0.55-0.95 with hip_yaw 0.89-0.95, knees 0.80-0.81 vs F2's 0.66-0.76) — **the leg lever works: legs now dance**.
+- turn err_end ≤0.35 m: turn2 **0.15-0.17** and turn3 **0.25** (both better than F2's 0.20-0.24) but turn1 0.39/0.70 — **FAIL on variance**.
+- whole-dance err-vs-ref ≤0.20 m: **FAIL — 0.48/0.51 vs F2's 0.06** (root net 0.65-0.69 m): better leg tracking did NOT contain drift; it increased it.
+- turn1 yaw-Δ: still skipped (+33-39° of +412° — unchanged vs F2); turn2/3 yaw now essentially exact (−360/−331 vs −369/−331).
+- **Turn-push (1 m/s): turn1 folds 59 % → 5.5 % and survivor displacement halved (1.11 → 0.60 m p50) — the hardware "falls without sling during the spin" signature is directly addressed. turn2 19 % → 0.8 %. BUT turn3 regressed 0 % → 55 %** (F2's 0 % was on 43 survivors of a 128-pool already 66 % folded; still, a real new weakness — F17's fuller turn3 commitment costs push tolerance there).
+
+**Verdict: REJECTED per pre-registration (latch 2/3, MPJPE, drift, ankle margin). take2-F2 stays in slot 1.** What the run established:
+1. The joint-space leg term does exactly what it was designed for (leg amplitude + turn1 push robustness + turn2/3 fidelity) — keep it in the recipe.
+2. Turn1's yaw skip is NOT a leg-tracking problem — the policy robustly refuses the 2.3 s / 412° spin nominally (while now surviving perturbations there). Fixing the performance of that window needs a different lever (sampling emphasis on turn1 / acceptance of the skip).
+3. **The plan's obs-v2 trigger has FIRED**: whole-dance root err 0.48-0.51 m ≥ 0.5 with net 0.65+ — drift is now the top open item and reward-side levers are exhausted (F3 root-tighten: worse; F17 legs: worse). Root-position feedback (obs contract v2) is the remaining structural fix — user decision to open.
+4. F17b continuation launched 2026-10-10 00:30 (warm F17@145000 +30k → 175000, run `take2F17b`, same recipe) under the plan's "extend if still oscillating" clause — tests whether the 2/3 latch and MPJPE/ankle margins are convergence artifacts. Artifacts: staging `~/sim2sim_g1/f17_staging/` (cfg + turn-push jsons), captures `~/sim2sim_g1/accept_f17/`, fidelity run `data/runs/take2F17/` (local); nothing landed in the repo model dir (rejected-candidate precedent, same as F3).
