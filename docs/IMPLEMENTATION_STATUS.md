@@ -791,6 +791,17 @@ Cross-candidate pattern now clear (F2 → F17 → F17b): the joint-space leg ter
 
 **F17e launched 15:55** (run `2026-10-10_15-55-25_take2F17e`, warm F17c@200000 +20k → 220000, seed 20261005, **single variable = the leg term softened: std 0.25→0.35, weight 0.5→0.3**; config diff verified two lines; backup `env_cfgs.py.bak-20261010-f17c` preserves the F17/b/c state). Rationale — the cross-candidate law (F2/F17/F17b/F17c): the sharp joint-space kernel is the strongest pressure in the reward; softening it should buy back MPJPE/ankle/push margins while F17c's entrenched leg behavior keeps amplitude. GPU now solo (F3-long finished its full 250k with error_joint_pos still 0.99-1.14 and reward 208 — the mechanism-based F3 rejection stands, unchanged). ETA ~18:30; then the standard acceptance chain.
 
+### F17e verdict (2026-10-10 ~19:00) + ladder closed: four candidates, the bars are jointly unreachable with this recipe family
+
+**F17e REJECTED**: accept 3/3 all first-press (guards from envelopes err 2.496→3.8) — but the softened term (std 0.35/w 0.3) lost most of the leg gain (knees 0.75/0.77 vs F17c's 0.84-0.86), produced the family's WORST MPJPE 0.280-0.286, first ankle-margin failure (0.140-0.144 < 0.15), turn1 push still 59 % (76/128), turn2/3 push 19 %/17 %, whole-err 0.19-0.20. Softening monotonically weakens tracking — it does not "free balance"; the reward pressure IS the tracking.
+
+**Ladder summary (F17 → F17b → F17c → F17e, F17d skipped)** — what is and is not reachable with `motion_joint_pos_legs` warm-starts on F2:
+- SOLVED and stable: the mid-dance latch (3/3 in every candidate since +30k — convergence artifact, not a recipe property).
+- SOLVED by seed choice: whole-dance drift (F17c 0.06-0.11 m = F2-grade).
+- BOUGHT monotonically by term strength: leg amplitude (knees 0.66-0.76 → 0.84 at std 0.25/w 0.5; → 0.75 back at std 0.35/w 0.3) at the price of MPJPE (+0.02-0.12).
+- NEVER met: MPJPE ≤0.18 (family range 0.17-0.29 vs F2's 0.16) and turn1 push ≤20 % (55-73 % band; F17's 5.5 % was a seed-lottery outlier, never reproduced). turn1's yaw skip (+32-68° of +412°) is universal to the family.
+- **Decision for the user**: F17c is the best match to the original hardware complaints (legs 0.84-0.86 best-ever, drift F2-grade, 3/3 first-press) and fails only MPJPE (0.21-0.24 vs 0.18 — a ~5 cm mean body-error difference) and the turn1 push bar; the pre-registered bars were sized around F2-grade global fidelity and are jointly unreachable with any leg-term strength tried. Options: (a) accept revised bars and stage F17c as the slot-1 candidate for the next attended session, (b) keep F2 and open obs-v2 (root-position feedback — the remaining structural lever, also the only untried direction for turn1), (c) another recipe generation (e.g. per-joint-group std, turn1-window sampling emphasis). GPU idle since 18:38; F2 unchanged in service.
+
 ### F17 verdict (2026-10-10 00:30): REJECTED on pre-registration — F2 stays; the leg mechanism is validated, drift moved to the front of the queue
 
 **Training completed** (145000/145001, 6h51m): final mean reward 160.5 (F2 ~147), error_joint_pos oscillating 0.50-0.88 (still not settled — the reason for the F17b continuation below). Export sha verified path: `~/dsh-workspace/take2_pipeline/policy_take2f17_145000.onnx`; guards from offline replay: envelopes step 1.070 / err 2.953 ×1.5 → **1.7 / 4.5** (staging `~/sim2sim_g1/f17_staging/`, motion CSV = the unchanged take2 chain).
