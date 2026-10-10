@@ -213,7 +213,7 @@ FSMStateName State_Tracking23::checkChange() {
   // back to fixed stand once the settle timeout expires.
   const auto gate = g1::entryGate23(_ctrlComp->positions23(), _ctrlComp->velocities23(),
                                     _ctrlComp->config23->defaults);
-  if (gate.passes(g1::kPolicyEntryMaxJointError, g1::kPolicyEntryMaxJointVel)) {
+  if (gate.passes(entry.handoffEntryMaxJointError, g1::kPolicyEntryMaxJointVel)) {
     std::cout << "[FSM] tracking motion complete, handing off to the velocity policy" << std::endl;
     return FSMStateName::LOCO;
   }
@@ -247,7 +247,7 @@ FSMStateName State_Tracking23::handoff(const char *reason) {
   // fixed stand with the reason logged.
   const auto gate = g1::entryGate23(_ctrlComp->positions23(), _ctrlComp->velocities23(),
                                     _ctrlComp->config23->defaults);
-  if (!gate.passes(g1::kPolicyEntryMaxJointError, g1::kPolicyEntryMaxJointVel)) {
+  if (!gate.passes(entry.handoffEntryMaxJointError, g1::kPolicyEntryMaxJointVel)) {
     std::cout << "[FSM] " << reason << "; policy entry rejected: worst joint " << gate.worstJoint
               << " error " << gate.worstError << " rad, max |dq| " << gate.worstVelocity
               << "; returning to fixed stand" << std::endl;

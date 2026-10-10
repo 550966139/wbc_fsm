@@ -26,6 +26,13 @@ struct TrackingMotion23 {
   // to fixed stand. The abort path gets no window (mid-dance poses cannot
   // pass anyway).
   float handoffSettleTimeout = 3.f;
+  // Pose threshold for the motion-end/abort policy-entry gate. The default
+  // matches the FixedStand R2+A gate (g1::kPolicyEntryMaxJointError), which is
+  // sized for stand-hold precision; a tracking policy can hold a legitimate
+  // steady-state offset of a few tenths of a rad on arm joints at the outro
+  // frame (measured: l_elbow 0.39 rad with |dq| settled to 0.007), so motions
+  // with such an offset raise this per-entry instead of losing the handoff.
+  float handoffEntryMaxJointError = .15f;
   bool loopMotion = false;
 };
 
@@ -39,8 +46,9 @@ struct TrackingMotion23 {
 // model_path/motion_path keys or several through a "motions" array (the two
 // forms are mutually exclusive). Array entries carry their own
 // model_path/motion_path/name and may override the top-level safety,
-// entry_gate, motion_end_target, handoff_settle_timeout and loop_motion
-// values; the top-level values remain the defaults and keep their validation.
+// entry_gate, motion_end_target, handoff_settle_timeout,
+// handoff_entry_max_joint_error and loop_motion values; the top-level values
+// remain the defaults and keep their validation.
 struct ConfigTracking23 {
   Joints23 defaults{}, kp{}, kd{}, scale{}, lower{}, upper{};
   float dt = .02f;
@@ -116,6 +124,11 @@ struct ConfigTracking23 {
         throw std::runtime_error("handoff_settle_timeout must be a number");
       defaults.handoffSettleTimeout = j.at("handoff_settle_timeout");
     }
+    if (j.contains("handoff_entry_max_joint_error")) {
+      if (!j.at("handoff_entry_max_joint_error").is_number())
+        throw std::runtime_error("handoff_entry_max_joint_error must be a number");
+      defaults.handoffEntryMaxJointError = j.at("handoff_entry_max_joint_error");
+    }
     if (j.contains("loop_motion")) {
       if (!j.at("loop_motion").is_boolean())
         throw std::runtime_error("loop_motion must be a boolean");
@@ -141,6 +154,11 @@ struct ConfigTracking23 {
           throw std::runtime_error("handoff_settle_timeout must be a number");
         m.handoffSettleTimeout = node.at("handoff_settle_timeout");
       }
+      if (node.contains("handoff_entry_max_joint_error")) {
+        if (!node.at("handoff_entry_max_joint_error").is_number())
+          throw std::runtime_error("handoff_entry_max_joint_error must be a number");
+        m.handoffEntryMaxJointError = node.at("handoff_entry_max_joint_error");
+      }
       if (node.contains("loop_motion")) {
         if (!node.at("loop_motion").is_boolean())
           throw std::runtime_error("loop_motion must be a boolean");
@@ -156,6 +174,9 @@ struct ConfigTracking23 {
       if (!std::isfinite(m.handoffSettleTimeout) || m.handoffSettleTimeout <= 0 ||
           m.handoffSettleTimeout > 30.f)
         throw std::runtime_error("invalid handoff settle timeout");
+      if (!std::isfinite(m.handoffEntryMaxJointError) || m.handoffEntryMaxJointError <= 0 ||
+          m.handoffEntryMaxJointError > 1.f)
+        throw std::runtime_error("invalid handoff entry gate pose threshold");
     };
     auto resolvePath = [&](const std::string &value) {
       std::filesystem::path resolved{value};

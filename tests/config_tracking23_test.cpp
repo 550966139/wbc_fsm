@@ -57,6 +57,7 @@ public:
           {"entry_gate", {{"entry_max_joint_error", 0.12}, {"entry_max_joint_vel", 0.8}}},
           {"motion_end_target", "policy23"},
           {"handoff_settle_timeout", 2.5},
+          {"handoff_entry_max_joint_error", 0.4},
           {"loop_motion", true}}});
     return multi;
   }
@@ -82,6 +83,8 @@ int main() {
               "shipped configuration hands motion end off to fixed stand (2026-09-22 decision)");
   suite.near(config.motions[0].handoffSettleTimeout, 3.f,
              "settle-hold window defaults to three seconds");
+  suite.near(config.motions[0].handoffEntryMaxJointError, .15f,
+             "handoff pose gate defaults to the R2+A entry threshold");
   suite.check(!config.motions[0].loopMotion, "loop_motion defaults to false");
   {
     auto toStand = fixture.legacy;
@@ -91,15 +94,21 @@ int main() {
     auto absent = fixture.legacy;
     absent.erase("motion_end_target");
     absent.erase("handoff_settle_timeout");
+    absent.erase("handoff_entry_max_joint_error");
     const auto defaultsOnly = fixture.load(absent);
     suite.check(defaultsOnly.motions[0].motionEndTarget == g1::MotionEndTarget::Policy23,
                 "absent motion_end_target keeps the policy23 default");
     suite.near(defaultsOnly.motions[0].handoffSettleTimeout, 3.f,
                "absent handoff_settle_timeout keeps the default");
+    suite.near(defaultsOnly.motions[0].handoffEntryMaxJointError, .15f,
+               "absent handoff_entry_max_joint_error keeps the default");
     auto custom = fixture.legacy;
     custom["handoff_settle_timeout"] = 5.5;
     suite.near(fixture.load(custom).motions[0].handoffSettleTimeout, 5.5f,
                "custom settle timeout loads");
+    custom["handoff_entry_max_joint_error"] = 0.5;
+    suite.near(fixture.load(custom).motions[0].handoffEntryMaxJointError, .5f,
+               "custom handoff pose gate loads");
   }
   suite.check(config.defaults.size() == 23, "tracking configuration uses all 23 joints");
   {
@@ -128,8 +137,10 @@ int main() {
                "shipped slot 1 carries its replay-calibrated step guard");
     suite.near(shipped.motions[1].maxTrackingError, 4.0f,
                "shipped slot 1 carries its replay-calibrated tracking guard");
-    suite.check(shipped.motions[1].motionEndTarget == g1::MotionEndTarget::Stand,
-                "shipped slot 1 inherits the stand end target");
+    suite.check(shipped.motions[1].motionEndTarget == g1::MotionEndTarget::Policy23,
+                "shipped slot 1 hands motion end to the velocity policy (2026-10-10 stand-stable decision)");
+    suite.near(shipped.motions[1].handoffEntryMaxJointError, .5f,
+               "shipped slot 1 widens the handoff pose gate for the tracking policy's steady-state offset");
   }
   {
     const auto multi = fixture.load(fixture.motionsValid());
@@ -151,6 +162,10 @@ int main() {
                 "per-motion motion_end_target override loads");
     suite.near(multi.motions[1].handoffSettleTimeout, 2.5f,
                "per-motion settle timeout override loads");
+    suite.near(multi.motions[1].handoffEntryMaxJointError, .4f,
+               "per-motion handoff pose gate override loads");
+    suite.near(multi.motions[0].handoffEntryMaxJointError, .15f,
+               "entry without overrides inherits the handoff pose gate default");
     suite.check(multi.motions[1].loopMotion, "per-motion loop override loads");
     suite.check(!multi.motions[0].loopMotion, "first entry keeps the top-level loop default");
   }
@@ -207,6 +222,12 @@ int main() {
   reject("negative settle timeout rejected", [](auto &j) { j["handoff_settle_timeout"] = -1; });
   reject("excessive settle timeout rejected", [](auto &j) { j["handoff_settle_timeout"] = 31; });
   reject("non-numeric settle timeout rejected", [](auto &j) { j["handoff_settle_timeout"] = "3"; });
+  reject("zero handoff pose gate rejected",
+         [](auto &j) { j["handoff_entry_max_joint_error"] = 0; });
+  reject("excessive handoff pose gate rejected",
+         [](auto &j) { j["handoff_entry_max_joint_error"] = 1.5; });
+  reject("non-numeric handoff pose gate rejected",
+         [](auto &j) { j["handoff_entry_max_joint_error"] = "0.5"; });
   reject("empty model path rejected", [](auto &j) { j["model_path"] = ""; });
   reject("empty motion path rejected", [](auto &j) { j["motion_path"] = ""; });
   reject("missing motion path rejected", [](auto &j) { j.erase("motion_path"); });
