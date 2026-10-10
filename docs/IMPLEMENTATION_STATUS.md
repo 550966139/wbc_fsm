@@ -783,6 +783,14 @@ Cross-candidate pattern now clear (F2 → F17 → F17b): the joint-space leg ter
 
 **F17c launched** (run `take2F17c`, warm F17b@175000 +25k → 200000, seed 20261004, recipe unchanged — the ladder's Step-2 seed-change, the F1→F2 proven escape): targets consolidating F17b's 3/3 with F17-grade turn1 robustness and r1-grade MPJPE consistency. Artifacts: staging `~/sim2sim_g1/f17b_staging/` (guards 1.8/4.8, turn-push json), captures `~/sim2sim_g1/accept_f17b/`, fidelity run `data/runs/take2F17b/`.
 
+### F17c verdict (2026-10-10 ~16:20): REJECTED on MPJPE/turn2-error/turn1-push; F17d SKIPPED (its problem is solved); F17e (softened leg term) launched
+
+**Acceptance 3/3 all first-press** (guards 1.9/4.3 from envelopes 1.207/2.832). Fidelity23: **whole-dance root err-vs-ref 0.06-0.11 m — the seed change recovered F2-grade drift** (turn2's 0.50-0.57 m err_end is transient and recovered by dance end); knees std 0.84-0.86 and turn2/3 leg std 0.87-0.93 = best of any version; ankle 0.170-0.171, apex 82-85 %, turn1/turn3 err_end 0.20-0.30. **But MPJPE 0.214-0.239 (bar ≤0.18), turn1 leg std dipped 0.73-0.74, turn1 yaw still skipped (+32° of +412°), and the turn-push profile collapsed to turn1 73 % / turn2 0 % / turn3 0 %** (worst turn1 of the family). REJECTED per pre-registration; F2 stays.
+
+**Ladder adjustment — F17d skipped**: its target (the mid-dance latch / entry-tube robustness) is already solved (F17b and F17c both 3/3); the remaining blockers are the leg term's fidelity cost, which F17d does not address.
+
+**F17e launched 15:55** (run `2026-10-10_15-55-25_take2F17e`, warm F17c@200000 +20k → 220000, seed 20261005, **single variable = the leg term softened: std 0.25→0.35, weight 0.5→0.3**; config diff verified two lines; backup `env_cfgs.py.bak-20261010-f17c` preserves the F17/b/c state). Rationale — the cross-candidate law (F2/F17/F17b/F17c): the sharp joint-space kernel is the strongest pressure in the reward; softening it should buy back MPJPE/ankle/push margins while F17c's entrenched leg behavior keeps amplitude. GPU now solo (F3-long finished its full 250k with error_joint_pos still 0.99-1.14 and reward 208 — the mechanism-based F3 rejection stands, unchanged). ETA ~18:30; then the standard acceptance chain.
+
 ### F17 verdict (2026-10-10 00:30): REJECTED on pre-registration — F2 stays; the leg mechanism is validated, drift moved to the front of the queue
 
 **Training completed** (145000/145001, 6h51m): final mean reward 160.5 (F2 ~147), error_joint_pos oscillating 0.50-0.88 (still not settled — the reason for the F17b continuation below). Export sha verified path: `~/dsh-workspace/take2_pipeline/policy_take2f17_145000.onnx`; guards from offline replay: envelopes step 1.070 / err 2.953 ×1.5 → **1.7 / 4.5** (staging `~/sim2sim_g1/f17_staging/`, motion CSV = the unchanged take2 chain).
