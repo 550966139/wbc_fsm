@@ -775,6 +775,14 @@ Whole-dance maxima for comparison: knee 137° / 636°/s, hip_pitch 80° / 397°/
 
 **F17b turn-push profile (eval_turn_push.py, 1 m/s mid-turn)**: turn1 **56 %** (72/128, disp p50 1.05 m), turn2 12 % (7/56), turn3 **10 %** (5/49) — vs F17's 5.5 %/0.8 %/55 %: the extra 30k iterations traded turn1 robustness away and recovered turn3. Push robustness per window is NOT stable across training; turn1's gain was not consolidated. F17b's free acceptance (guards 1.8/4.8 from envelopes 1.162/3.167) still queued per the ladder — the 3/3 latch question is separate from the push profile.
 
+### F17b verdict (2026-10-10 ~09:40): 3/3 latch FIXED, but REJECTED on MPJPE/push/drift — F17c (seed change) launched
+
+**Acceptance 3/3 full-dance zero dance-window latch** (r1 needed 2 buzz re-rolls; r2/r3 first-press) — the F17 mid-dance divergence was indeed a convergence artifact: +30k eliminated it. Fidelity23 (turn-aware): MPJPE 0.172/0.194/0.246 (bar ≤0.18 — r2/r3 fail), ankle margin 0.178-0.184 ✓, apex 81 % ✓, knees std_ratio **0.84 = best of any version** (F17 0.80-0.81, F2 0.66-0.76), ankles 0.74-0.79; turn leg std 0.75-0.88 ✓; turn err_end 0.15-0.29 on r1/r2 but r3 hit 0.37/0.40 (turn1/turn2) — variance grows through the run; whole-dance root err-vs-ref 0.35-0.44 m (F2 0.06, F17 0.48-0.51 — the leg term consistently costs world drift); turn1 yaw still skipped (+65-68° of +412°). Combined with the push profile (turn1 56 %), **F17b REJECTED per pre-registration; F2 stays in slot 1.**
+
+Cross-candidate pattern now clear (F2 → F17 → F17b): the joint-space leg term reliably buys leg amplitude (knees 0.66-0.76 → 0.84) and turn2/3 fidelity, costs world drift (0.06 → 0.35-0.51 m) and MPJPE margin; turn1 push robustness swings wildly (59 % → 5.5 % → 56 %) — it is NOT a consolidated property. The latch rate IS trainable (F17b 3/3).
+
+**F17c launched** (run `take2F17c`, warm F17b@175000 +25k → 200000, seed 20261004, recipe unchanged — the ladder's Step-2 seed-change, the F1→F2 proven escape): targets consolidating F17b's 3/3 with F17-grade turn1 robustness and r1-grade MPJPE consistency. Artifacts: staging `~/sim2sim_g1/f17b_staging/` (guards 1.8/4.8, turn-push json), captures `~/sim2sim_g1/accept_f17b/`, fidelity run `data/runs/take2F17b/`.
+
 ### F17 verdict (2026-10-10 00:30): REJECTED on pre-registration — F2 stays; the leg mechanism is validated, drift moved to the front of the queue
 
 **Training completed** (145000/145001, 6h51m): final mean reward 160.5 (F2 ~147), error_joint_pos oscillating 0.50-0.88 (still not settled — the reason for the F17b continuation below). Export sha verified path: `~/dsh-workspace/take2_pipeline/policy_take2f17_145000.onnx`; guards from offline replay: envelopes step 1.070 / err 2.953 ×1.5 → **1.7 / 4.5** (staging `~/sim2sim_g1/f17_staging/`, motion CSV = the unchanged take2 chain).
