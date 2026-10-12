@@ -58,16 +58,17 @@ ref_joint_pos[23], ref_joint_vel[23], ref_anchor_quat_wxyz[4]
 - `model_path`、`motion_path`:相对路径按仓库根解析(与 config23 相同)。指向 `model/g1_23dof_tracking/policy.onnx` 与 `model/g1_23dof_tracking/motion.csv`(**2026-09-29 起 = take6F10fullending@100000 部署版**:`unitree_rl_mjlab_g1_23dof_tracking_v1` 契约、R4 手术版参考 + **真人真实结尾**(GMR 暖启动锁死修复后的 1832 帧 36.6 s 版本,首尾站姿过渡 1s/3s;数据链见 `docs/IMPLEMENTATION_STATUS.md` "P0 real-ending recovery" 节)。F9 回滚件 `*_take6f9r4_90000*.bak`、F13(结尾保真候选,踢腿 73%)暂存 224 `/tmp/f13_deploy/`)。
 - `safety.max_target_step` / `safety.max_tracking_error`:TRACKING 状态入场时换入、出场恢复(见第 5 节)。当前为 take6F10fullending@100000 的标定值(**1.5 / 5.5**;换模型必须重新标定,协议与数值留痕 `docs/IMPLEMENTATION_STATUS.md`)。
 - `entry_gate.entry_max_joint_error`(0.15 rad)/ `entry_gate.entry_max_joint_vel`(1.0 rad/s):入场门槛(站立/走跑 → 跟踪,与走跑 R2+A 入场同阈值)。
-- `motion_end_target`(默认 `"policy23"`;**当前发货配置按 2026-09-22/23 用户决策设为 `"stand"`**——舞后不自动交接,手动 R2+A 进走跑):动作播完或 R2+B 中止时的交接目标——`"policy23"` = 过走跑入场门禁后零命令交接给速度策略(门禁不过则回退 FIXEDSTAND 并打印原因);`"stand"` = 回退 FIXEDSTAND(Phase 1 旧行为,调试/ bring-up 用)。
+- `motion_end_target`(默认 `"policy23"`):动作播完或 R2+B 中止时的交接目标——`"policy23"` = 过走跑入场门禁后零命令交接给速度策略(门禁不过则回退 FIXEDSTAND 并打印原因);`"stand"` = 回退 FIXEDSTAND(Phase 1 旧行为,调试/ bring-up 用)。**现役配置(2026-10-10 起):take6-F10 slot 0 保持 `"stand"`(2026-09-22/23 决策,其结尾稳态偏差未按新闸复测),take2-F2 slot 1 改为 `"policy23"`**(sim 6/6 验证:舞完→沉降→交接→速度策略脱带站立;take2 末帧距默认站姿仅 0.014 rad)。
 - `handoff_settle_timeout`(默认 3.0 s,范围 (0, 30]):motion-end 沉降保持窗——播完后光标冻结在引出段末帧、跟踪策略继续运行,每周期重评走跑入场门禁,通过即交接;超时仍不过则回退 FIXEDSTAND 并打印原因。R2+B 中止路径无沉降窗(舞步中段位姿等也过不了门禁),保持单发判定。
+- `handoff_entry_max_joint_error`(默认 0.15 rad = FixedStand R2+A 闸,范围 (0, 1];2026-10-10 新增,per-motion 可覆盖):motion-end/中止交接门禁的**姿态**阈值;`|dq|` 阈值固定 1.0 不变。存在原因:跟踪策略在结尾保持帧上有**确定性的稳态跟踪偏差**(实测 F2 左肘 0.387 rad、F17c 右肩 yaw 0.672 rad,|dq| 均已收敛到 <0.08)——按 FixedStand 保持精度设定的 0.15 永远过不了。**换跟踪策略必须用日志实测结尾偏差重标此值**(现役 take2-F2 = 0.5;候选 F17c 需 0.8)。
 - `loop_motion`(默认 false):动作播完是否循环。
-- **多动作库 `motions[]`(2026-09-30 起,双舞支持)**:可选数组(1-4 项)替代单一 `model_path`/`motion_path`(两种形式互斥,同时出现即拒绝)。每项必含 `name`(非空、唯一)、`model_path`、`motion_path`,可选携带自己的 `safety` / `entry_gate` / `motion_end_target` / `handoff_settle_timeout` / `loop_motion` 覆盖块——**守卫是逐模型标定值,绝不跨动作共用**;未覆盖的项继承顶层默认值(顶层的 `safety`/`entry_gate` 因此始终必填)。手柄映射:**R2+B = 第 1 支(保持肌肉记忆),R2+Y = 第 2 支**;入场门禁按所选动作自己的帧 0 与阈值判定,守卫在 `enter()` 换入该动作的值。R2+Y 在跟踪进行中只记日志不切参考(先 R2+B 中止);未配置第 2 支时 R2+Y 仅记日志。`[track:名称]` 1 Hz 快照与 FSM 日志均携带动作名。自动探测要求**所有**已配置动作的模型+动作文件齐备才启用跟踪。
+- **多动作库 `motions[]`(2026-09-30 起,双舞支持)**:可选数组(1-4 项)替代单一 `model_path`/`motion_path`(两种形式互斥,同时出现即拒绝)。每项必含 `name`(非空、唯一)、`model_path`、`motion_path`,可选携带自己的 `safety` / `entry_gate` / `motion_end_target` / `handoff_settle_timeout` / `handoff_entry_max_joint_error` / `loop_motion` 覆盖块——**守卫是逐模型标定值,绝不跨动作共用**;未覆盖的项继承顶层默认值(顶层的 `safety`/`entry_gate` 因此始终必填)。手柄映射:**R2+B = 第 1 支(保持肌肉记忆),R2+Y = 第 2 支**;入场门禁按所选动作自己的帧 0 与阈值判定,守卫在 `enter()` 换入该动作的值。R2+Y 在跟踪进行中只记日志不切参考(先 R2+B 中止);未配置第 2 支时 R2+Y 仅记日志。`[track:名称]` 1 Hz 快照与 FSM 日志均携带动作名。自动探测要求**所有**已配置动作的模型+动作文件齐备才启用跟踪。
 
 CLI:`--tracking-config <path>` 显式指定(严格:任何缺失/非法即拒绝启动)。未指定时自动探测 `config/g1_23dof_tracking.json` —— **仅当其模型与动作文件同时存在才启用**;否则打印提示并禁用跟踪,行为与之前完全一致。`--check` 模式在启用跟踪时会完整校验:配置解析、动作 CSV 加载、模型存在性、ONNX 形状探针及一次真实推理(不启动 DDS)。
 
 ## 4. 操作
 
-链路(按 2026-09-22/23 用户决策,**出厂配置 `motion_end_target="stand"`**:舞完回 FixedStand,手动 R2+A 进走跑;`"policy23"` 链式交接代码保留为配置开关):**START → 站立 → R2+B → 跳舞(36.6 s)→ 播完回站立**。F10 的 1 Hz 关节快照日志 `[track] f=帧/总数 worst j<i> e<误差> q=<23值>`(2026-09-28 起)使每次真机会话天然可离线分析。
+链路(**现役 2026-10-10 起:take2-F2 舞完自动交接速度策略;take6-F10 舞完回 FixedStand 再手动 R2+A**;推荐操作链两端都用主动平衡的策略站立,FixedStand 只做引导/兜底):**START → 站立 → R2+A(策略站立,稳定 ≥5 s)→ R2+B/R2+Y 起舞 → take2:播完沉降→自动交接→策略站立 / take6:播完回站立**。F10 的 1 Hz 关节快照日志 `[track] f=帧/总数 worst j<i> e<误差> q=<23值>`(2026-09-28 起,双舞格式 `[track:名称] f=…/N`)使每次真机会话天然可离线分析。
 
 **⚠️ F10 结尾走位(已知行为,现场必读)**:结尾段(入场后 t≈31-35 s)策略会自平衡迈步、可能向任意方向移动 1-2 m 再站定(仿真实测漂移 0.8-2 m;根因=张臂定格的幅度衰减,改善中,F13 候选已压到 0.83 m)。**机器人周围 3 m 半径必须清空**。
 
@@ -75,7 +76,7 @@ CLI:`--tracking-config <path>` 显式指定(严格:任何缺失/非法即拒绝�
 2. R2+A:站立 → 走跑策略(速度策略零命令原地站立是真机+仿真验证过的主动平衡态)。
 3. **R2+B:站立 或 走跑 → 跟踪(第 1 支舞)**。门槛:逐关节 `|q − ref_pos[第0帧]| ≤ 0.15` 且 `|dq| ≤ 1.0`;不满足时打印最差关节与原因并保持原状态(与 R2+A 同一模式)。跟踪配置不可用(未提供模型/动作文件)时 R2+B 仅提示,不触发任何故障。走跑中按 R2+B 走同一门禁。
 3b. **R2+Y:站立 或 走跑 → 跟踪第 2 支舞**(2026-09-30 起,`motions[]` 配置存在时)。与 R2+B 完全同一门禁逻辑,但对照**第 2 支动作**的帧 0 与其自身阈值;守卫换入第 2 支的标定值。跟踪进行中按 R2+Y 只记日志不切参考(先 R2+B 中止再选);仅配置一支舞时 R2+Y 记日志忽略。仿真键盘:**1=START、2=R2+A、3=L2+B、4=SELECT、5=R2+B、6=R2+Y、8=吊带、9=脱吊**。
-4. 播放结束(默认 `motion_end_target="policy23"`,`handoff_settle_timeout` 默认 3.0 s):**沉降保持窗**——光标冻结在引出段末帧(站姿),跟踪策略继续运行保持主动平衡,每周期重评走跑入场门禁(`|q − 默认站姿| ≤ 0.15` 且 `|dq| ≤ 1.0`,与 R2+A 同一实现);通过则**交接给速度策略**(零命令,主动平衡);舞后沉降抖动(短时 |dq|>1)不会让交接"一锤定音"地失败。超时仍不过则回退 FIXEDSTAND 并打印原因行(含已等待时长与最差关节)。`loop_motion=true` 时回卷到第 0 帧继续,不交接。
+4. 播放结束(`motion_end_target="policy23"` 时,`handoff_settle_timeout` 默认 3.0 s):**沉降保持窗**——光标冻结在引出段末帧(站姿),跟踪策略继续运行保持主动平衡,每周期重评走跑入场门禁(`|q − 默认站姿| ≤ handoff_entry_max_joint_error(默认 0.15,per-motion)` 且 `|dq| ≤ 1.0`);通过则**交接给速度策略**(零命令,主动平衡);舞后沉降抖动(短时 |dq|>1)不会让交接"一锤定音"地失败。超时仍不过则回退 FIXEDSTAND 并打印原因行(含已等待时长与最差关节)。`loop_motion=true` 时回卷到第 0 帧继续,不交接。
 5. **R2+B(再次):中止**——**无沉降窗**(中止时位姿在舞步中段,等也过不了门禁):单发评估走跑入场门禁,过则 LOCO,否则 FIXEDSTAND。
 6. L2+B(锁定阻尼急停)、SELECT/SIGINT(退出)、故障恢复流程与现有 FSM 完全一致,不经过跟踪状态特殊处理。
 
