@@ -58,9 +58,9 @@ ref_joint_pos[23], ref_joint_vel[23], ref_anchor_quat_wxyz[4]
 - `model_path`、`motion_path`:相对路径按仓库根解析(与 config23 相同)。指向 `model/g1_23dof_tracking/policy.onnx` 与 `model/g1_23dof_tracking/motion.csv`(**2026-09-29 起 = take6F10fullending@100000 部署版**:`unitree_rl_mjlab_g1_23dof_tracking_v1` 契约、R4 手术版参考 + **真人真实结尾**(GMR 暖启动锁死修复后的 1832 帧 36.6 s 版本,首尾站姿过渡 1s/3s;数据链见 `docs/IMPLEMENTATION_STATUS.md` "P0 real-ending recovery" 节)。F9 回滚件 `*_take6f9r4_90000*.bak`、F13(结尾保真候选,踢腿 73%)暂存 224 `/tmp/f13_deploy/`)。
 - `safety.max_target_step` / `safety.max_tracking_error`:TRACKING 状态入场时换入、出场恢复(见第 5 节)。当前为 take6F10fullending@100000 的标定值(**1.5 / 5.5**;换模型必须重新标定,协议与数值留痕 `docs/IMPLEMENTATION_STATUS.md`)。
 - `entry_gate.entry_max_joint_error`(0.15 rad)/ `entry_gate.entry_max_joint_vel`(1.0 rad/s):入场门槛(站立/走跑 → 跟踪,与走跑 R2+A 入场同阈值)。
-- `motion_end_target`(默认 `"policy23"`):动作播完或 R2+B 中止时的交接目标——`"policy23"` = 过走跑入场门禁后零命令交接给速度策略(门禁不过则回退 FIXEDSTAND 并打印原因);`"stand"` = 回退 FIXEDSTAND(Phase 1 旧行为,调试/ bring-up 用)。**现役配置(2026-10-10 起):take6-F10 slot 0 保持 `"stand"`(2026-09-22/23 决策,其结尾稳态偏差未按新闸复测),take2-F2 slot 1 改为 `"policy23"`**(sim 6/6 验证:舞完→沉降→交接→速度策略脱带站立;take2 末帧距默认站姿仅 0.014 rad)。
+- `motion_end_target`(默认 `"policy23"`):动作播完或 R2+B 中止时的交接目标——`"policy23"` = 过走跑入场门禁后零命令交接给速度策略(门禁不过则回退 FIXEDSTAND 并打印原因);`"stand"` = 回退 FIXEDSTAND(Phase 1 旧行为,调试/ bring-up 用)。**现役配置(2026-10-12 起):take6-F10 slot 0 保持 `"stand"`(2026-09-22/23 决策,其结尾稳态偏差未按新闸复测),take2-F17c slot 1 为 `"policy23"`**(sim 验证:舞完→沉降→交接→速度策略脱带站立;take2 末帧距默认站姿仅 0.014 rad。2026-10-12 用户决策 (a):接受修订门槛,F17c 换下 F2——MPJPE 0.21-0.24 与 turn1 推力 73% 为已知代价,换来腿幅最佳 + 漂移 F2 级 + 3/3 一次按键;F2 全套件保留在 repo 作回滚)。
 - `handoff_settle_timeout`(默认 3.0 s,范围 (0, 30]):motion-end 沉降保持窗——播完后光标冻结在引出段末帧、跟踪策略继续运行,每周期重评走跑入场门禁,通过即交接;超时仍不过则回退 FIXEDSTAND 并打印原因。R2+B 中止路径无沉降窗(舞步中段位姿等也过不了门禁),保持单发判定。
-- `handoff_entry_max_joint_error`(默认 0.15 rad = FixedStand R2+A 闸,范围 (0, 1];2026-10-10 新增,per-motion 可覆盖):motion-end/中止交接门禁的**姿态**阈值;`|dq|` 阈值固定 1.0 不变。存在原因:跟踪策略在结尾保持帧上有**确定性的稳态跟踪偏差**(实测 F2 左肘 0.387 rad、F17c 右肩 yaw 0.672 rad,|dq| 均已收敛到 <0.08)——按 FixedStand 保持精度设定的 0.15 永远过不了。**换跟踪策略必须用日志实测结尾偏差重标此值**(现役 take2-F2 = 0.5;候选 F17c 需 0.8)。
+- `handoff_entry_max_joint_error`(默认 0.15 rad = FixedStand R2+A 闸,范围 (0, 1];2026-10-10 新增,per-motion 可覆盖):motion-end/中止交接门禁的**姿态**阈值;`|dq|` 阈值固定 1.0 不变。存在原因:跟踪策略在结尾保持帧上有**确定性的稳态跟踪偏差**(实测 F2 左肘 0.387 rad、F17c 右肩 yaw 0.672 rad,|dq| 均已收敛到 <0.08)——按 FixedStand 保持精度设定的 0.15 永远过不了。**换跟踪策略必须用日志实测结尾偏差重标此值**(现役 take2-F17c = 0.8;回滚 take2-F2 = 0.5)。
 - `loop_motion`(默认 false):动作播完是否循环。
 - **多动作库 `motions[]`(2026-09-30 起,双舞支持)**:可选数组(1-4 项)替代单一 `model_path`/`motion_path`(两种形式互斥,同时出现即拒绝)。每项必含 `name`(非空、唯一)、`model_path`、`motion_path`,可选携带自己的 `safety` / `entry_gate` / `motion_end_target` / `handoff_settle_timeout` / `handoff_entry_max_joint_error` / `loop_motion` 覆盖块——**守卫是逐模型标定值,绝不跨动作共用**;未覆盖的项继承顶层默认值(顶层的 `safety`/`entry_gate` 因此始终必填)。手柄映射:**R2+B = 第 1 支(保持肌肉记忆),R2+Y = 第 2 支**;入场门禁按所选动作自己的帧 0 与阈值判定,守卫在 `enter()` 换入该动作的值。R2+Y 在跟踪进行中只记日志不切参考(先 R2+B 中止);未配置第 2 支时 R2+Y 仅记日志。`[track:名称]` 1 Hz 快照与 FSM 日志均携带动作名。自动探测要求**所有**已配置动作的模型+动作文件齐备才启用跟踪。
 
@@ -68,7 +68,7 @@ CLI:`--tracking-config <path>` 显式指定(严格:任何缺失/非法即拒绝�
 
 ## 4. 操作
 
-链路(**现役 2026-10-10 起:take2-F2 舞完自动交接速度策略;take6-F10 舞完回 FixedStand 再手动 R2+A**;推荐操作链两端都用主动平衡的策略站立,FixedStand 只做引导/兜底):**START → 站立 → R2+A(策略站立,稳定 ≥5 s)→ R2+B/R2+Y 起舞 → take2:播完沉降→自动交接→策略站立 / take6:播完回站立**。F10 的 1 Hz 关节快照日志 `[track] f=帧/总数 worst j<i> e<误差> q=<23值>`(2026-09-28 起,双舞格式 `[track:名称] f=…/N`)使每次真机会话天然可离线分析。
+链路(**现役 2026-10-12 起:take2-F17c 舞完自动交接速度策略;take6-F10 舞完回 FixedStand 再手动 R2+A**;推荐操作链两端都用主动平衡的策略站立,FixedStand 只做引导/兜底):**START → 站立 → R2+A(策略站立,稳定 ≥5 s)→ R2+B/R2+Y 起舞 → take2:播完沉降→自动交接→策略站立 / take6:播完回站立**。F10 的 1 Hz 关节快照日志 `[track] f=帧/总数 worst j<i> e<误差> q=<23值>`(2026-09-28 起,双舞格式 `[track:名称] f=…/N`)使每次真机会话天然可离线分析。
 
 **⚠️ F10 结尾走位(已知行为,现场必读)**:结尾段(入场后 t≈31-35 s)策略会自平衡迈步、可能向任意方向移动 1-2 m 再站定(仿真实测漂移 0.8-2 m;根因=张臂定格的幅度衰减,改善中,F13 候选已压到 0.83 m)。**机器人周围 3 m 半径必须清空**。
 

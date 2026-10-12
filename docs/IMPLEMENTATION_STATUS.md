@@ -1,6 +1,6 @@
 # G1 23DoF implementation ledger
 
-Updated: 2026-09-29 (R6+F15 fidelity campaign same day: kick-window reference ankle clamp shipped with clean gates; F15 = R6 data + F13 recipe lands kick 77 % with ending 0.98 m — directional win, below the 85 % bar, F10 stays in service). Branch: `feature/g1-23dof-dance`.
+Updated: 2026-10-12 (user decision (a): revised bars accepted, take2-F17c replaces F2 in slot 1 on repo + 224; PC2 swap awaits the attended session). Branch: `feature/g1-23dof-dance`.
 Reference baseline: `b352409`; previous adaptation HEAD: `2434c85`.
 
 Goal: adapt the reference controller for a G1 23DoF robot, then validate and deploy on its PC2. The implemented policy path covers damping, fixed stand, flat-terrain velocity control, and 23DoF whole-body motion tracking (dance). Original 29DoF sources/resources remain as references. 23DoF WBC/dance tracking is not implemented by truncating those models.
@@ -827,3 +827,19 @@ The user noticed the pre-dance stand had the feet off the ground. Band physics f
 2. Turn1's yaw skip is NOT a leg-tracking problem — the policy robustly refuses the 2.3 s / 412° spin nominally (while now surviving perturbations there). Fixing the performance of that window needs a different lever (sampling emphasis on turn1 / acceptance of the skip).
 3. **The plan's obs-v2 trigger has FIRED**: whole-dance root err 0.48-0.51 m ≥ 0.5 with net 0.65+ — drift is now the top open item and reward-side levers are exhausted (F3 root-tighten: worse; F17 legs: worse). Root-position feedback (obs contract v2) is the remaining structural fix — user decision to open.
 4. F17b continuation launched 2026-10-10 00:30 (warm F17@145000 +30k → 175000, run `take2F17b`, same recipe) under the plan's "extend if still oscillating" clause — tests whether the 2/3 latch and MPJPE/ankle margins are convergence artifacts. Artifacts: staging `~/sim2sim_g1/f17_staging/` (cfg + turn-push jsons), captures `~/sim2sim_g1/accept_f17/`, fidelity run `data/runs/take2F17/` (local); nothing landed in the repo model dir (rejected-candidate precedent, same as F3).
+
+### take2-F17c deployed to slot 1 (2026-10-12, user decision (a): revised bars accepted)
+
+After the 2026-10-12 viewing session the user chose option (a) from the ladder closure: accept the revised bars and stage F17c as the slot-1 candidate. Accepted, known costs vs the pre-registration: MPJPE 0.214-0.239 (bar ≤0.18, ≈+5 cm mean body error vs F2) and turn1 push 73 % at 1 m/s (family-worst; turn2/3 are 0 %). What it buys: legs best-ever (knees std 0.84-0.86 vs F2's 0.66-0.76), whole-dance drift back to F2 grade (0.06-0.11 m), 3/3 first-press acceptance, and the 2026-10-12 live-verified complete → handoff → detached policy stand.
+
+**Shipped (repo + 224; PC2 NOT touched — attended session only):**
+- `model/g1_23dof_tracking/policy_take2f17c_200000.onnx` (md5 `0bad6b22…`, copy of `~/sim2sim_g1/f17c_staging/policy.onnx`, export path `export_from_ckpt.py`), plus provenance fetched from the 224 run dir `logs/rsl_rl/g1_23dof_tracking/2026-10-10_09-21-37_take2F17c/`: `model_take2f17c_200000.pt`, `agent_take2f17c.yaml` (resume take2F17b/model_175000.pt), `env_take2f17c.yaml` (verified: num_envs 512, seed 20261004, `motion_joint_pos_legs` std 0.25).
+- Motion chain unchanged: F17c's motion.csv is md5-identical to `motion_take2f2_115000.csv` (`74ae7b38…`) — slot 1 reuses that file (the "f2" in the filename is historical; it is the shared take2 chain, and F2's rollback entry still points at it).
+- `config/g1_23dof_tracking.json` slot 1 → `take2-F17c`, safety **1.9/4.3**, `motion_end_target: "policy23"`, `handoff_entry_max_joint_error: 0.8` (outro steady-state offset 0.672 rad r_shoulder_yaw, measured 2026-10-12).
+- `tests/config_tracking23_test.cpp` shipped-baseline assertions updated to the F17c slot values.
+
+**Validation (exact commands, real results):** wsk host `cmake --build build-tests -j2 && ctest --test-dir build-tests` → **6/6**; full build `cmake --build build -j2 && ctest --test-dir build` → **7/7** (incl. `g1_onnx_and_fsm_offline`, 26.4 s) and `./build/wbc_fsm --check --config config/g1_23dof.json` → dual PASS. Guard recheck: `scripts/replay_tracking23.py --config config/g1_23dof_tracking.json --motion take2-F17c` (local base python, onnxruntime 1.30.0) → envelopes **1.207 / 2.832** ×1.5 → suggests 1.9/4.3 = the shipped values exactly (no write needed; sdk2py lacks onnxruntime, hence base env). 224: rsync `wbc_fsm/` → `~/sim2sim/wbc_fsm/` (excl. build/.git/fidelity data), md5 re-verified, rebuild clean, ctest **7/7**, `--check` dual PASS, slots `['take6-F10','take2-F17c']`.
+
+**Rollback:** all F2 artifacts remain in-repo (`policy_take2f2_115000.onnx` + checkpoint + yamls); reverting = restoring the previous `motions[1]` entry (name take2-F2, model/motion F2 paths, 1.7/4.0, handoff gate 0.5) and rebuilding the test baseline in one commit. take2-F1r4 and take6-F9 `.bak` rollback sets untouched.
+
+**PC2 prerequisites for the attended swap (not done):** tarball backup → rsync → aarch64 rebuild → `cd build && ctest` → `--check` dual PASS → hash/slot verify; update `RUNBOOK_DUAL_DANCE.md` (R2+A ops chain); sling protocol 2.20 m, full chain under sling before detached stand; live A/B vs F2 = config slot-1 swap + restart (the gamepad has only two motion bindings, R2+B/R2+Y).
