@@ -197,15 +197,15 @@
    "motion_path": "model/g1_23dof_tracking/motion.csv"
   },
   {
-   "name": "take2-F2",
-   "model_path": "model/g1_23dof_tracking/policy_take2f2_115000.onnx",
+   "name": "take2-F17c",
+   "model_path": "model/g1_23dof_tracking/policy_take2f17c_200000.onnx",
    "motion_path": "model/g1_23dof_tracking/motion_take2f2_115000.csv",
    "safety": {
-    "max_target_step": 1.7,
-    "max_tracking_error": 4.0
+    "max_target_step": 1.9,
+    "max_tracking_error": 4.3
    },
    "motion_end_target": "policy23",
-   "handoff_entry_max_joint_error": 0.5
+   "handoff_entry_max_joint_error": 0.8
   }
  ]
 }

@@ -118,7 +118,10 @@ int main() {
   }
   {
     // The shipped dual-motion baseline (2026-09-30): take6-F10 keeps slot 0
-    // with inherited guards, take2-F1r4 overrides with its own calibration.
+    // with inherited guards, take2 overrides with its own calibration. Slot 1
+    // moved take2-F2 -> take2-F17c on 2026-10-12 (user decision: accept the
+    // revised bars; guards 1.9/4.3 from F17c replay envelopes, handoff pose
+    // gate 0.8 for its 0.672 rad r_shoulder_yaw outro offset).
     const auto shipped = fixture.load(fixture.valid);
     suite.check(shipped.motions.size() == 2,
                 "shipped configuration carries the dual-motion library");
@@ -132,14 +135,20 @@ int main() {
                "shipped slot 0 inherits the F10 tracking guard");
     suite.check(shipped.motions[0].motionEndTarget == g1::MotionEndTarget::Stand,
                 "shipped slot 0 keeps the stand end target");
-    suite.check(shipped.motions[1].name == "take2-F2", "shipped slot 1 is take2-F2 (R2+Y)");
-    suite.near(shipped.motions[1].maxTargetStep, 1.7f,
+    suite.check(shipped.motions[1].name == "take2-F17c", "shipped slot 1 is take2-F17c (R2+Y)");
+    suite.check(shipped.motions[1].model ==
+                    fixture.directory / "model/g1_23dof_tracking/policy_take2f17c_200000.onnx",
+                "shipped slot 1 keeps the F17c policy");
+    suite.check(shipped.motions[1].motion ==
+                    fixture.directory / "model/g1_23dof_tracking/motion_take2f2_115000.csv",
+                "shipped slot 1 shares the take2 motion chain with its F2 predecessor");
+    suite.near(shipped.motions[1].maxTargetStep, 1.9f,
                "shipped slot 1 carries its replay-calibrated step guard");
-    suite.near(shipped.motions[1].maxTrackingError, 4.0f,
+    suite.near(shipped.motions[1].maxTrackingError, 4.3f,
                "shipped slot 1 carries its replay-calibrated tracking guard");
     suite.check(shipped.motions[1].motionEndTarget == g1::MotionEndTarget::Policy23,
                 "shipped slot 1 hands motion end to the velocity policy (2026-10-10 stand-stable decision)");
-    suite.near(shipped.motions[1].handoffEntryMaxJointError, .5f,
+    suite.near(shipped.motions[1].handoffEntryMaxJointError, .8f,
                "shipped slot 1 widens the handoff pose gate for the tracking policy's steady-state offset");
   }
   {
