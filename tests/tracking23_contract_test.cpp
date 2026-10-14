@@ -1,3 +1,4 @@
+#include "common/base_state_estimator.h"
 #include "common/motion_csv.h"
 #include "common/tracking23.h"
 #include "test_support.h"
@@ -147,7 +148,9 @@ int main() {
     const std::array<float, 3> gyro{.1f, .2f, .3f};
     const auto obs = g1::observationTracking23(refPos.data(), refVel.data(), robot, ref, gyro, q,
                                                dq, defaults, last);
-    CHECK(obs.size() == 124);
+    CHECK(obs.size() == g1::kTrackingObsMax);
+    for (std::size_t i = g1::kTrackingObsSizeV1; i < g1::kTrackingObsMax; ++i)
+      suite.near(obs[i], 0.f, "v1 build leaves the v2 tail zeroed");
     for (std::size_t i = 0; i < g1::kPolicyDof; ++i) {
       suite.near(obs[g1::kTrackingRefPos + i], refPos[i], "reference joint positions first");
       suite.near(obs[g1::kTrackingRefVel + i], refVel[i], "reference joint velocities second");
@@ -184,6 +187,85 @@ int main() {
                                     last);
         },
         "non-finite reference rejected");
+  }
+
+  // Contract v2 (127): base linear velocity inserted before the gyro, all
+  // later segments shifted by three.
+  {
+    std::array<float, 23> refPos{}, refVel{}, defaults{}, q{}, dq{}, last{};
+    for (std::size_t i = 0; i < 23; ++i) {
+      refPos[i] = static_cast<float>(i) * .01f;
+      refVel[i] = -2.f + static_cast<float>(i) * .05f;
+      defaults[i] = static_cast<float>(i) * .01f;
+      q[i] = defaults[i] + static_cast<float>(i) * .02f;
+      dq[i] = static_cast<float>(i) * -.03f;
+      last[i] = static_cast<float>(i) * .04f;
+    }
+    const auto robot = rotZ(.25f), ref = rotZ(.1f);
+    const std::array<float, 3> gyro{.1f, .2f, .3f}, baseLinVel{-.4f, .25f, .02f};
+    CHECK(g1::kTrackingObsSizeV2 == 127 && g1::kTrackingBaseLinVel == 52 &&
+          g1::kTrackingGyroV2 == 55 && g1::kTrackingJointPosV2 == 58 &&
+          g1::kTrackingJointVelV2 == 81 && g1::kTrackingLastActionV2 == 104);
+    CHECK(g1::trackingObsWidth("unitree_rl_mjlab_g1_23dof_tracking_v1") == 124);
+    CHECK(g1::trackingObsWidth("unitree_rl_mjlab_g1_23dof_tracking_v2") == 127);
+    suite.throws([] { (void)g1::trackingObsWidth("unitree_rl_mjlab_g1_23dof_tracking_v9"); },
+                 "unknown contract rejected");
+    const auto obs = g1::observationTracking23(refPos.data(), refVel.data(), robot, ref, gyro, q,
+                                               dq, defaults, last, &baseLinVel);
+    CHECK(obs.size() == g1::kTrackingObsMax);
+    for (std::size_t i = 0; i < 3; ++i) {
+      suite.near(obs[g1::kTrackingBaseLinVel + i], baseLinVel[i], "v2 base linear velocity block");
+      suite.near(obs[g1::kTrackingGyroV2 + i], gyro[i], "v2 gyro shifted after velocity block");
+    }
+    for (std::size_t i = 0; i < 23; ++i) {
+      suite.near(obs[g1::kTrackingJointPosV2 + i], q[i] - defaults[i], "v2 joint positions");
+      suite.near(obs[g1::kTrackingJointVelV2 + i], dq[i], "v2 joint velocities");
+      suite.near(obs[g1::kTrackingLastActionV2 + i], last[i], "v2 last action");
+    }
+    auto badVel = baseLinVel;
+    badVel[1] = nan;
+    suite.throws(
+        [&] {
+          (void)g1::observationTracking23(refPos.data(), refVel.data(), robot, ref, gyro, q, dq,
+                                          defaults, last, &badVel);
+        },
+        "non-finite base linear velocity rejected");
+  }
+
+  // obs-v2 estimator: quiet stance converges near zero velocity, non-finite
+  // input is ignored, and the lever term maps pelvis rates to the IMU frame.
+  {
+    g1::BaseStateEstimator23 est;
+    g1::BaseStateEstimator23::Inputs in;
+    in.valid = true;
+    for (std::size_t i = 0; i < 23; ++i) {
+      in.q[i] = 0.f;
+      in.tau[i] = 0.f;
+    }
+    in.tau[0] = 20.f; // left hip_pitch loaded
+    in.tau[6] = 20.f; // right hip_pitch loaded -> double stance
+    in.quat = {1.f, 0.f, 0.f, 0.f};
+    in.accel = {0.f, 0.f, 9.81f}; // gravity-only specific force
+    float worst = 0.f;
+    for (int k = 0; k < 400; ++k) { // 8 s of quiet double stance
+      const auto v = est.update(in);
+      for (float c : v)
+        worst = std::max(worst, std::fabs(c));
+    }
+    CHECK(worst < .05f);
+    CHECK(est.stanceLeft() && est.stanceRight());
+    // Pure yaw rate: IMU-site lever adds gyro x r_imu to the pelvis velocity
+    // ((0,0,1) x (0.04525,0,-0.08339) = (0, 0.04525, 0)).
+    g1::BaseStateEstimator23::Inputs yawIn = in;
+    yawIn.gyro = {0.f, 0.f, 1.f};
+    const auto v = est.update(yawIn);
+    suite.near(v[0], 0.f, "yaw lever x component");
+    suite.near(v[1], 0.04525f, "yaw lever y component");
+    // Non-finite joints: ignored, no crash.
+    g1::BaseStateEstimator23::Inputs bad = in;
+    bad.q[3] = nan;
+    (void)est.update(bad);
+    CHECK(true);
   }
 
   // Action targets reuse the velocity-policy transform and clamping.

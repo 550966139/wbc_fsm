@@ -6,23 +6,56 @@
 #include <string>
 
 namespace g1 {
-// 23DoF whole-body motion-tracking contract (unitree_rl_mjlab_g1_23dof_tracking_v1):
-// single float input [1,124], single float output [1,23], normalization embedded
-// in-graph. Observation layout (exact order, see docs/tracking23.md):
-//   [0:46]   reference joint_pos(23) then reference joint_vel(23), current frame
-//   [46:52]  anchor orientation error, rotation matrix first two columns row-major
-//   [52:55]  base angular velocity (IMU gyro)
-//   [55:78]  joint_pos relative to defaults (23)
-//   [78:101] joint_vel (23)
-//   [101:124] last action (23)
-constexpr std::size_t kTrackingObsSize = 124;
+// 23DoF whole-body motion-tracking contracts:
+//   v1 "unitree_rl_mjlab_g1_23dof_tracking_v1"  (in service, take6-F10/take2-F17c)
+//     single float input [1,124], single float output [1,23], normalization
+//     embedded in-graph. Observation layout (exact order, docs/tracking23.md):
+//       [0:46]   reference joint_pos(23) then reference joint_vel(23), current frame
+//       [46:52]  anchor orientation error, rotation matrix first two columns row-major
+//       [52:55]  base angular velocity (IMU gyro)
+//       [55:78]  joint_pos relative to defaults (23)
+//       [78:101] joint_vel (23)
+//       [101:124] last action (23)
+//   v2 "unitree_rl_mjlab_g1_23dof_tracking_v2"  (obs-v2 velocity feedback)
+//     input [1,127]: same terms, with estimated base linear velocity (IMU-site,
+//     pelvis frame, from BaseStateEstimator23) inserted BEFORE the gyro,
+//     mirroring the training-side actor order command/anchor_ori/base_lin_vel/
+//     base_ang_vel/...:
+//       [52:55]  base linear velocity (estimated)
+//       [55:58]  base angular velocity (IMU gyro)
+//       [58:81]  joint_pos relative to defaults (23)
+//       [81:104] joint_vel (23)
+//       [104:127] last action (23)
+constexpr std::size_t kTrackingObsSize = 124; // v1 width (kept name for v1 callers)
+constexpr std::size_t kTrackingObsSizeV1 = 124;
+constexpr std::size_t kTrackingObsSizeV2 = 127;
+constexpr std::size_t kTrackingObsMax = kTrackingObsSizeV2;
 constexpr std::size_t kTrackingRefPos = 0;
 constexpr std::size_t kTrackingRefVel = 23;
 constexpr std::size_t kTrackingAnchor = 46;
+// v1 offsets
 constexpr std::size_t kTrackingGyro = 52;
 constexpr std::size_t kTrackingJointPos = 55;
 constexpr std::size_t kTrackingJointVel = 78;
 constexpr std::size_t kTrackingLastAction = 101;
+// v2 offsets (base linear velocity inserted before the gyro)
+constexpr std::size_t kTrackingBaseLinVel = 52;
+constexpr std::size_t kTrackingGyroV2 = 55;
+constexpr std::size_t kTrackingJointPosV2 = 58;
+constexpr std::size_t kTrackingJointVelV2 = 81;
+constexpr std::size_t kTrackingLastActionV2 = 104;
+// Contract selection: the config names one contract per file (no mixing v1/v2
+// motions in a single config).
+inline bool trackingContractIsV2(const std::string &contract) {
+  return contract == "unitree_rl_mjlab_g1_23dof_tracking_v2";
+}
+inline std::size_t trackingObsWidth(const std::string &contract) {
+  if (contract == "unitree_rl_mjlab_g1_23dof_tracking_v1")
+    return kTrackingObsSizeV1;
+  if (trackingContractIsV2(contract))
+    return kTrackingObsSizeV2;
+  throw std::runtime_error("unsupported 23DoF tracking policy contract: " + contract);
+}
 // Policy joint index of waist_yaw, the anchor body's yaw degree of freedom.
 constexpr std::size_t kWaistYawJoint = 12;
 // Tracking entry ramp-in: number of 50 Hz cycles over which outgoing targets
@@ -30,7 +63,7 @@ constexpr std::size_t kWaistYawJoint = 12;
 // the controller-handoff command jump without touching the observation chain.
 constexpr std::size_t kTrackingEntryRampCycles = 20;
 
-using ObservationTracking23 = std::array<float, kTrackingObsSize>;
+using ObservationTracking23 = std::array<float, kTrackingObsMax>;
 using Quat23 = std::array<float, 4>; // w, x, y, z
 
 // wxyz Hamilton product, same convention as mathTools.h quat_mul.
@@ -106,30 +139,42 @@ inline EntryGate23 entryGate23(const Joints23 &q, const Joints23 &dq, const Join
   }
   return gate;
 }
-// Build the 124-dim tracking observation for one control cycle. refPos/refVel
-// point at the 23 reference values of the current motion frame; refAnchor is
-// the reference anchor quaternion after entry yaw alignment.
+// Build the tracking observation for one control cycle. refPos/refVel point at
+// the 23 reference values of the current motion frame; refAnchor is the
+// reference anchor quaternion after entry yaw alignment. Passing a non-null
+// baseLinVel selects the v2 layout (127) with the estimated base linear
+// velocity inserted before the gyro; nullptr builds the v1 layout (124) and
+// leaves the tail zeroed.
 inline ObservationTracking23
 observationTracking23(const float *refPos, const float *refVel, const Quat23 &robotAnchor,
                       const Quat23 &refAnchor, const std::array<float, 3> &gyro, const Joints23 &q,
-                      const Joints23 &dq, const Joints23 &defaults, const Joints23 &lastAction) {
+                      const Joints23 &dq, const Joints23 &defaults, const Joints23 &lastAction,
+                      const std::array<float, 3> *baseLinVel = nullptr) {
   if (refPos == nullptr || refVel == nullptr)
     throw std::runtime_error("missing tracking reference frame");
   ObservationTracking23 obs{};
   const auto anchor = anchorError6(robotAnchor, refAnchor);
+  const bool v2 = baseLinVel != nullptr;
+  const std::size_t gyroOff = v2 ? kTrackingGyroV2 : kTrackingGyro;
+  const std::size_t posOff = v2 ? kTrackingJointPosV2 : kTrackingJointPos;
+  const std::size_t velOff = v2 ? kTrackingJointVelV2 : kTrackingJointVel;
+  const std::size_t actOff = v2 ? kTrackingLastActionV2 : kTrackingLastAction;
   for (std::size_t i = 0; i < kPolicyDof; ++i) {
     obs[kTrackingRefPos + i] = refPos[i];
     obs[kTrackingRefVel + i] = refVel[i];
-    obs[kTrackingJointPos + i] = q[i] - defaults[i];
-    obs[kTrackingJointVel + i] = dq[i];
-    obs[kTrackingLastAction + i] = lastAction[i];
+    obs[posOff + i] = q[i] - defaults[i];
+    obs[velOff + i] = dq[i];
+    obs[actOff + i] = lastAction[i];
   }
   for (std::size_t i = 0; i < 6; ++i)
     obs[kTrackingAnchor + i] = anchor[i];
   for (std::size_t i = 0; i < 3; ++i)
-    obs[kTrackingGyro + i] = gyro[i];
-  for (float v : obs)
-    if (!std::isfinite(v))
+    obs[gyroOff + i] = gyro[i];
+  if (v2)
+    for (std::size_t i = 0; i < 3; ++i)
+      obs[kTrackingBaseLinVel + i] = (*baseLinVel)[i];
+  for (std::size_t i = 0; i < (v2 ? kTrackingObsSizeV2 : kTrackingObsSizeV1); ++i)
+    if (!std::isfinite(obs[i]))
       throw std::runtime_error("non-finite tracking observation");
   return obs;
 }

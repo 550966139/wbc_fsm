@@ -52,6 +52,7 @@ struct TrackingMotion23 {
 struct ConfigTracking23 {
   Joints23 defaults{}, kp{}, kd{}, scale{}, lower{}, upper{};
   float dt = .02f;
+  std::size_t obsWidth = g1::kTrackingObsSizeV1; // 124 (v1) or 127 (v2)
   static constexpr std::size_t kMaxMotions = 4;
   std::vector<TrackingMotion23> motions;
   static ConfigTracking23 load(const std::filesystem::path &path) {
@@ -68,12 +69,17 @@ struct ConfigTracking23 {
     for (const auto &index : j.at("joint_ids_map"))
       if (!index.is_number_integer())
         throw std::runtime_error("joint mapping indices must be integers");
-    if (j.at("policy_contract") != "unitree_rl_mjlab_g1_23dof_tracking_v1" ||
-        j.at("policy_dof") != 23 || j.at("motor_count") != 29 ||
-        j.at("observation_size") != static_cast<int>(kTrackingObsSize) ||
+    if (j.at("policy_dof") != 23 || j.at("motor_count") != 29 ||
         j.at("joint_ids_map") != nlohmann::json(kPolicyToMotor))
       throw std::runtime_error("unsupported 23DoF tracking policy contract or mapping");
+    // Contract v1 (124, in service) or v2 (127, obs-v2 velocity feedback); the
+    // observation size must match the named contract.
+    const auto contract = j.at("policy_contract").get<std::string>();
+    const std::size_t obsWidth = g1::trackingObsWidth(contract);
+    if (j.at("observation_size") != static_cast<int>(obsWidth))
+      throw std::runtime_error("23DoF tracking observation_size does not match policy_contract");
     ConfigTracking23 c;
+    c.obsWidth = obsWidth;
     auto array = [&](const char *name) {
       const auto values = j.at(name).get<std::vector<float>>();
       if (values.size() != 23)

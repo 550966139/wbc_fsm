@@ -67,7 +67,7 @@ if(BUILD_TESTING)
     add_port_test(g1_policy23_test tests/policy23_test.cpp g1_policy23_contract)
     add_port_test(g1_safety_test tests/safety_test.cpp g1_safety_regression)
     add_port_test(g1_tracking23_test tests/tracking23_contract_test.cpp g1_tracking23_contract)
-    target_sources(g1_tracking23_test PRIVATE src/common/motion_csv.cpp)
+    target_sources(g1_tracking23_test PRIVATE src/common/motion_csv.cpp src/common/base_state_estimator.cpp)
     target_include_directories(g1_tracking23_test PRIVATE src)
 
     if(WBC_BUILD_CONTROLLER)

@@ -37,6 +37,23 @@
 
 `target = default_joint_pos + a * action_scale`(逐关节 23 维)→ `g1::clampTargets23` 限位截断(训练侧 MuJoCo 在 ctrlrange 截断)→ 以速度策略相同的 kp/kd 经 `setTargets23` 下发。
 
+### 契约 v2(obs-v2 速度反馈,127 维,2026-10-13 新增)
+
+第二个契约 `unitree_rl_mjlab_g1_23dof_tracking_v2`:输入 `[1,127]`,输出不变 `[1,23]`。**同一布局在陀螺前插入 3 维基座线速度(机体系,IMU-site 速度)**,镜像训练侧 actor 顺序(command/anchor_ori/**base_lin_vel**/base_ang_vel/…):
+
+| 区间 | 维度 | 内容 |
+| --- | --- | --- |
+| `[0:46]` | 46 | 同 v1(参考关节 pos+vel) |
+| `[46:52]` | 6 | 锚点姿态误差(同 v1) |
+| `[52:55]` | 3 | **基座线速度(估计)** `kTrackingBaseLinVel` |
+| `[55:58]` | 3 | 基座角速度(IMU gyro) |
+| `[58:81]` `[81:104]` `[104:127]` | 23×3 | 关节位置−默认 / 关节速度 / 上一帧动作(同 v1 后移 3) |
+
+- **双契约规则:一个 config 文件一个契约版本**——`policy_contract` 写 v1 则全config必须 124,写 v2 则 127,`observation_size` 必须与契约串一致(v1/v2 模型不可在同一 config 混装)。在役 v1 配置行为不变(改动后 `--check` 复验通过)。
+- **线速度来源 = `g1::BaseStateEstimator23`**(`src/common/base_state_estimator.cpp`,离线冻结算法的 C++ 移植):接触辅助腿式里程计(腿 FK+雅可比、足底 4 候选点择优)+ IMU 互补融合;输入全部来自 `rt/lowstate`(q/dq/**tau_est**/quat/gyro/accel——`IOSDK.cpp` 自 2026-10-13 起捞起 tau_est/ddq 与 IMU rpy),不依赖 ddq(仿真桥不填)。离线精度(以 sim `rt/sportmodestate` 为真值,双采集验证):深蹲窗 vxy RMSE 0.19 m/s、vz 0.09-0.10;训练侧该观测项自带 ±0.5 噪声 DR,估计误差远在其内。
+- 动作 CSV 格式不变(50 列)——速度增量是机器人侧估计量,无需新参考数据;`scripts/replay_tracking23.py` 自动按 ONNX 输入宽度适配(v2 理想化重放在速度位插 0)。
+- **当前状态:候选 take6-V2(staging,未上役)**——验收 3/3 首按全舞、零舞蹈窗锁死、深蹲单支撑窗(历史死点)3/3 通过、膝幅度 0.92 战役最佳;MPJPE 0.22 超预注册线 0.02-0.03(与 take2-F17c 被接受的交换同类),**待用户 P5 决策**(详见 `docs/IMPLEMENTATION_STATUS.md` obs-v2 节与 `docs/obs-v2-feasibility.md`)。观看脚本:`bash ~/sim2sim_g1/run_view_v2.sh [--band]`。
+
 ## 2. 动作文件格式(部署侧)
 
 纯 CSV,无表头,每行一帧(50 Hz,与控制周期对齐,**不做插值**),每行 50 列:
@@ -53,7 +70,7 @@ ref_joint_pos[23], ref_joint_vel[23], ref_anchor_quat_wxyz[4]
 
 `config/g1_23dof_tracking.json`(严格加载,`include/control/config_tracking23.h`):
 
-- `policy_contract` 必须为 `unitree_rl_mjlab_g1_23dof_tracking_v1`;`observation_size` 124、`policy_dof` 23、`motor_count` 29、`joint_ids_map` 与 `kPolicyToMotor` 完全一致,否则拒绝。
+- `policy_contract` 必须为 `unitree_rl_mjlab_g1_23dof_tracking_v1`(124 维)或 `unitree_rl_mjlab_g1_23dof_tracking_v2`(127 维,obs-v2,见 §1 契约 v2 小节);`observation_size` 必须与契约串一致(124/127),`policy_dof` 23、`motor_count` 29、`joint_ids_map` 与 `kPolicyToMotor` 完全一致,否则拒绝。现役配置仍为 v1。
 - `default_joint_pos` / `joint_lower` / `joint_upper` / `stiffness` / `damping` / `action_scale` 与 `config/g1_23dof.json` 相同(共用机器人配置)。
 - `model_path`、`motion_path`:相对路径按仓库根解析(与 config23 相同)。指向 `model/g1_23dof_tracking/policy.onnx` 与 `model/g1_23dof_tracking/motion.csv`(**2026-09-29 起 = take6F10fullending@100000 部署版**:`unitree_rl_mjlab_g1_23dof_tracking_v1` 契约、R4 手术版参考 + **真人真实结尾**(GMR 暖启动锁死修复后的 1832 帧 36.6 s 版本,首尾站姿过渡 1s/3s;数据链见 `docs/IMPLEMENTATION_STATUS.md` "P0 real-ending recovery" 节)。F9 回滚件 `*_take6f9r4_90000*.bak`、F13(结尾保真候选,踢腿 73%)暂存 224 `/tmp/f13_deploy/`)。
 - `safety.max_target_step` / `safety.max_tracking_error`:TRACKING 状态入场时换入、出场恢复(见第 5 节)。当前为 take6F10fullending@100000 的标定值(**1.5 / 5.5**;换模型必须重新标定,协议与数值留痕 `docs/IMPLEMENTATION_STATUS.md`)。

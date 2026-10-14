@@ -119,7 +119,7 @@ int main(int argc, char **argv) {
     if (!run) {
       std::cout << "PASS: 23DoF config and ONNX contract checked; DDS was not started.\n";
       if (trackingConfig)
-        std::cout << "Tracking: config, motion CSV and 124-input ONNX contract checked.\n";
+        std::cout << "Tracking: config, motion CSV and ONNX contract checked (124- or 127-input).\n";
       std::cout << "This does not establish trained-model provenance or sim-to-real validity.\n";
       return 0;
     }

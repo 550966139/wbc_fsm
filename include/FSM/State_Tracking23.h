@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FSM/FSMState.h"
+#include "common/base_state_estimator.h"
 #include "common/tracking23.h"
 #include <memory>
 #include <onnxruntime_cxx_api.h>
@@ -33,6 +34,10 @@ private:
   Ort::Env env_{ORT_LOGGING_LEVEL_WARNING, "g1-tracking23"};
   Ort::SessionOptions options_;
   std::vector<TrackingSession> sessions_;
+  // Contract v1 (124) or v2 (127): one width per config, no mixing.
+  std::size_t obsWidth_ = g1::kTrackingObsSizeV1;
+  // obs-v2: contact-aided base linear velocity fed into the [52:55) block.
+  g1::BaseStateEstimator23 estimator_;
   // Motion slot active for the current episode; chosen at enter() from
   // CtrlComponents::nextTrackingMotion (R2+B -> 0, R2+Y -> 1).
   std::size_t motionIndex_ = 0;

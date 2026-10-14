@@ -29,12 +29,14 @@ struct IMU {
   float quaternion[4]; // w, x, y, z
   float gyroscope[3];
   float accelerometer[3];
+  float rpy[3]; // LowState IMUState rpy (filled since obs-v2; estimator input)
 
   IMU() {
     for (int i = 0; i < 3; i++) {
       quaternion[i] = 0;
       gyroscope[i] = 0;
       accelerometer[i] = 0;
+      rpy[i] = 0;
     }
     quaternion[3] = 0;
   }

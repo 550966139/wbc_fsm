@@ -146,7 +146,7 @@ def main():
             return config_path
 
         good_tracking = check_tracking("valid", constant_model(input_width=124), True,
-                                       "124-input ONNX contract checked", end_target="policy23")
+                                       "ONNX contract checked", end_target="policy23")
         # Fallback-switch variant for the FSM test's phase-1 behaviour checks.
         stand_tracking = directory / "stand-tracking.json"
         stand_config = json.loads(good_tracking.read_text())
@@ -202,7 +202,25 @@ def main():
             return config_path
 
         dual_tracking = check_tracking_json("dual-valid", dual_tracking_config(), True,
-                                            "124-input ONNX contract checked")
+                                            "ONNX contract checked")
+        # obs-v2 (2026-10-13): the v2 contract with a 127-input graph loads and
+        # the width must agree with the contract string.
+        v2_config = json.loads(json.dumps(tracking_config))
+        v2_config["policy_contract"] = "unitree_rl_mjlab_g1_23dof_tracking_v2"
+        v2_config["observation_size"] = 127
+        v2_model = directory / "v2-tracking.onnx"
+        v2_model.write_bytes(constant_model(input_width=127))
+        v2_config["model_path"] = str(v2_model)
+        v2_config["motion_path"] = str(motion_path)
+        check_tracking_json("v2-valid", v2_config, True, "ONNX contract checked")
+        v2_wrong = json.loads(json.dumps(v2_config))
+        v2_wrong["observation_size"] = 124
+        check_tracking_json("v2-wrong-width", v2_wrong, False, "does not match policy_contract")
+        v2_bad_model = json.loads(json.dumps(v2_config))
+        v2_bad_model["model_path"] = str(directory / "v2-bad.onnx")
+        (directory / "v2-bad.onnx").write_bytes(constant_model(input_width=124))
+        check_tracking_json("v2-wrong-model-width", v2_bad_model, False,
+                            "requires float input [1,127]")
         mixed = dual_tracking_config()
         mixed["model_path"] = str(directory / "valid-tracking.onnx")
         check_tracking_json("dual-legacy-mixed", mixed, False, "cannot be combined")

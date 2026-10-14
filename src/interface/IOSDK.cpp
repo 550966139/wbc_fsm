@@ -239,12 +239,17 @@ void IOSDK::LowStateHandler(const void *message) {
   for (std::size_t i = 0; i < g1::kMotorCount; ++i) {
     state_.motorState[i].q = raw.motor_state()[i].q();
     state_.motorState[i].dq = raw.motor_state()[i].dq();
+    // obs-v2 estimator inputs (dropped before; ddq is unfilled in the sim
+    // bridge and is kept for completeness only — nothing depends on it).
+    state_.motorState[i].tauEst = raw.motor_state()[i].tau_est();
+    state_.motorState[i].ddq = raw.motor_state()[i].ddq();
   }
   for (int i = 0; i < 4; ++i)
     state_.imu.quaternion[i] = raw.imu_state().quaternion()[i];
   for (int i = 0; i < 3; ++i) {
     state_.imu.gyroscope[i] = raw.imu_state().gyroscope()[i];
     state_.imu.accelerometer[i] = raw.imu_state().accelerometer()[i];
+    state_.imu.rpy[i] = raw.imu_state().rpy()[i];
   }
   std::memcpy(rx_.buff, &raw.wireless_remote()[0], 40);
   gamepad_.update(rx_.RF_RX);

@@ -147,9 +147,11 @@ int main() {
     suite.near(shipped.motions[1].maxTrackingError, 4.3f,
                "shipped slot 1 carries its replay-calibrated tracking guard");
     suite.check(shipped.motions[1].motionEndTarget == g1::MotionEndTarget::Policy23,
-                "shipped slot 1 hands motion end to the velocity policy (2026-10-10 stand-stable decision)");
+                "shipped slot 1 hands motion end to the velocity policy (2026-10-10 stand-stable "
+                "decision)");
     suite.near(shipped.motions[1].handoffEntryMaxJointError, .8f,
-               "shipped slot 1 widens the handoff pose gate for the tracking policy's steady-state offset");
+               "shipped slot 1 widens the handoff pose gate for the tracking policy's steady-state "
+               "offset");
   }
   {
     const auto multi = fixture.load(fixture.motionsValid());
@@ -188,8 +190,24 @@ int main() {
     mutate(invalid);
     suite.throws([&] { fixture.load(invalid); }, description);
   };
+  {
+    // obs-v2 (2026-10-13): the v2 contract loads with observation_size 127;
+    // width and contract string must agree in both directions.
+    auto v2 = fixture.legacy;
+    v2["policy_contract"] = "unitree_rl_mjlab_g1_23dof_tracking_v2";
+    v2["observation_size"] = 127;
+    const auto loaded = fixture.load(v2);
+    suite.check(loaded.obsWidth == 127, "v2 contract loads with the 127 width");
+    suite.check(fixture.load(fixture.valid).obsWidth == 124,
+                "shipped v1 configuration keeps the 124 width");
+  }
   reject("velocity contract cannot load as tracking",
          [](auto &j) { j["policy_contract"] = "unitree_rl_mjlab_g1_23dof_velocity_v1"; });
+  reject("v2 contract with the v1 width rejected", [](auto &j) {
+    j["policy_contract"] = "unitree_rl_mjlab_g1_23dof_tracking_v2";
+    j["observation_size"] = 124;
+  });
+  reject("v1 contract with the v2 width rejected", [](auto &j) { j["observation_size"] = 127; });
   reject("29DoF tracking policy cannot load", [](auto &j) { j["policy_dof"] = 29; });
   reject("motor slot count cannot change", [](auto &j) { j["motor_count"] = 23; });
   reject("velocity observation width cannot load", [](auto &j) { j["observation_size"] = 81; });

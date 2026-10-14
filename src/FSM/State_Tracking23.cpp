@@ -20,6 +20,7 @@ State_Tracking23::State_Tracking23(CtrlComponents *components)
   if (!components->configTracking23 || components->trackingMotions.empty())
     throw std::runtime_error("23DoF tracking requires a tracking config and loaded motions");
   const auto &config = components->configTracking23.value();
+  obsWidth_ = config.obsWidth;
   options_.SetIntraOpNumThreads(1);
   options_.SetInterOpNumThreads(1);
   options_.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
@@ -30,14 +31,14 @@ State_Tracking23::State_Tracking23(CtrlComponents *components)
     if (!std::filesystem::is_regular_file(entry.model))
       throw std::runtime_error("23DoF tracking policy missing for motion \"" + entry.name +
                                "\": " + entry.model.string() +
-                               "; provide a matching trained 124-input / 23-output model");
+                               "; provide a matching trained 127-input / 23-output model");
     TrackingSession s;
     s.session = std::make_unique<Ort::Session>(env_, entry.model.c_str(), options_);
     if (s.session->GetInputCount() != 1 || s.session->GetOutputCount() != 1)
       throw std::runtime_error("23DoF tracking policy must have one observation input and one "
                                "action output (motion \"" +
                                entry.name + "\")");
-    requireShape(s.session->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo(), 124, "input");
+    requireShape(s.session->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo(), obsWidth_, "input");
     requireShape(s.session->GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo(), 23, "output");
     s.inputName = s.session->GetInputNameAllocated(0, allocator).get();
     s.outputName = s.session->GetOutputNameAllocated(0, allocator).get();
@@ -45,13 +46,17 @@ State_Tracking23::State_Tracking23(CtrlComponents *components)
   }
 
   // Validate executable output on motion frame 0 before the DDS publisher can
-  // be started; the anchor terms use identity robot orientation.
+  // be started; the anchor terms use identity robot orientation. The v2
+  // velocity block is zero at construction (estimator not yet warmed up).
+  const std::array<float, 3> zeroVel{};
+  const std::array<float, 3> *baseLinVel = obsWidth_ == g1::kTrackingObsSizeV2 ? &zeroVel : nullptr;
   for (std::size_t slot = 0; slot < config.motions.size(); ++slot) {
     const auto *motion = components->trackingMotions[slot].get();
     const float *quat0 = motion->anchorQuat(0);
-    auto observation = g1::observationTracking23(
-        motion->jointPos(0), motion->jointVel(0), {1.f, 0.f, 0.f, 0.f},
-        {quat0[0], quat0[1], quat0[2], quat0[3]}, {}, config.defaults, {}, config.defaults, {});
+    auto observation =
+        g1::observationTracking23(motion->jointPos(0), motion->jointVel(0), {1.f, 0.f, 0.f, 0.f},
+                                  {quat0[0], quat0[1], quat0[2], quat0[3]}, {}, config.defaults, {},
+                                  config.defaults, {}, baseLinVel);
     (void)infer(observation, slot);
   }
 }
@@ -59,10 +64,10 @@ State_Tracking23::State_Tracking23(CtrlComponents *components)
 g1::Joints23 State_Tracking23::infer(g1::ObservationTracking23 &observation,
                                      std::size_t motionIndex) {
   const auto &s = sessions_[motionIndex];
-  const std::array<int64_t, 2> shape{1, 124};
+  const std::array<int64_t, 2> shape{1, static_cast<int64_t>(obsWidth_)};
   const auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-  auto input = Ort::Value::CreateTensor<float>(memory, observation.data(), observation.size(),
-                                               shape.data(), shape.size());
+  auto input = Ort::Value::CreateTensor<float>(memory, observation.data(), obsWidth_, shape.data(),
+                                               shape.size());
   const char *inputs[] = {s.inputName.c_str()};
   const char *outputs[] = {s.outputName.c_str()};
   auto result = s.session->Run(Ort::RunOptions{nullptr}, inputs, &input, 1, outputs, 1);
@@ -123,10 +128,29 @@ void State_Tracking23::run() {
   const auto refAligned =
       g1::quatMul23(entryAlign_, {refQuat[0], refQuat[1], refQuat[2], refQuat[3]});
   const auto &gyro = _lowState->imu.gyroscope;
+  // obs-v2: estimate the base linear velocity block from the LowState-only
+  // fields (q/dq/tau_est/quat/gyro/accel); v1 configs skip the estimator.
+  std::array<float, 3> baseLinVel{};
+  const std::array<float, 3> *baseLinVelPtr =
+      obsWidth_ == g1::kTrackingObsSizeV2 ? &baseLinVel : nullptr;
+  if (baseLinVelPtr) {
+    g1::BaseStateEstimator23::Inputs est;
+    est.q = _ctrlComp->positions23();
+    est.dq = _ctrlComp->velocities23();
+    for (std::size_t i = 0; i < g1::kPolicyDof; ++i)
+      est.tau[i] = _lowState->motorState[g1::kPolicyToMotor[i]].tauEst;
+    est.quat = {_lowState->imu.quaternion[0], _lowState->imu.quaternion[1],
+                _lowState->imu.quaternion[2], _lowState->imu.quaternion[3]};
+    est.gyro = {gyro[0], gyro[1], gyro[2]};
+    est.accel = {_lowState->imu.accelerometer[0], _lowState->imu.accelerometer[1],
+                 _lowState->imu.accelerometer[2]};
+    est.valid = true;
+    baseLinVel = estimator_.update(est);
+  }
   auto observation = g1::observationTracking23(
       motion.jointPos(cursor_), motion.jointVel(cursor_), currentRobotAnchor(), refAligned,
       {gyro[0], gyro[1], gyro[2]}, _ctrlComp->positions23(), _ctrlComp->velocities23(),
-      config.defaults, lastAction_);
+      config.defaults, lastAction_, baseLinVelPtr);
   const auto actions = infer(observation, motionIndex_);
   auto target = g1::clampTargets23(g1::actionTargets23(actions, config.scale, config.defaults),
                                    config.lower, config.upper);

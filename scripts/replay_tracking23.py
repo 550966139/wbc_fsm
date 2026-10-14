@@ -40,25 +40,30 @@ def replay(model_path, motion_path, defaults, scale):
 
     sess = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
     in_name = sess.get_inputs()[0].name
-    assert list(sess.get_inputs()[0].shape) == [1, 124]
+    width = sess.get_inputs()[0].shape[1]
+    assert list(sess.get_inputs()[0].shape) == [1, width] and width in (124, 127)
     assert list(sess.get_outputs()[0].shape) == [1, 23]
 
     last_action = np.zeros(23, dtype=np.float32)
     targets = np.zeros((motion.shape[0], 23), dtype=np.float64)
     anchor_identity = np.array([1.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=np.float32)
+    # v2 (127) inserts the estimated base_lin_vel block before the gyro; the
+    # idealized replay zeroes it (same convention as the gyro block).
+    vel_block = [np.zeros(3, dtype=np.float32)] if width == 127 else []
     for k in range(motion.shape[0]):
         obs = np.concatenate(
             [
                 ref_pos[k],
                 ref_vel[k],
                 anchor_identity,
+                *vel_block,
                 np.zeros(3, dtype=np.float32),
                 ref_pos[k] - defaults,
                 ref_vel[k],
                 last_action,
             ]
         ).astype(np.float32)
-        assert obs.shape == (124,)
+        assert obs.shape == (width,)
         action = sess.run(None, {in_name: obs[None, :]})[0][0]
         targets[k] = defaults + action * scale
         last_action = action.astype(np.float32)
