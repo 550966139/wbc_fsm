@@ -1007,3 +1007,21 @@ Read: the velocity-feedback hypothesis is CONFIRMED for the F18 wall (bar 7 + am
 **Campaign repositioning (user decision)**: the deliverable is *qualified reference data*, not a training ablation — S9 full training, probe comparison analysis, and the window-survival eval are CANCELLED (not parked). Mechanism recorded: training cannot fix bad data; the policy either copies it (jitter/tilt) or routes around it (low-pass/attenuation/drift = the fidelity loss behind "legs don't look like the video"). The policy-side wall (deep-crouch) was already solved by obs-v2; everything remaining is data-side. Acceptance moves to machine-judged physical invariants (worst-frame gated: four-corner z ∈ [−2,+2] mm, stance XY speed, swing clearance, jitter cap, limits, ZMP budget) with a re-verify/repair loop per pipeline stage — full framework and prioritized roadmap in `docs/data-quality.md` (project_g1 v3 closed-loop first, then graded de-jitter, both-takes pass, take1 zero-human generalization test).
 
 **Session artifacts**: `scripts/motion_calib/` (6 tools, paths parametrized via `MC_G1_XML_DIR`/`default_g1_xml()`), wsk env `mc` + `~/sim2sim_g1/mc_work/` (58+ md5-reconciled chain files) + `mc_web` static server (:8231, SVG preview archived) + dual-window `play_compare3d.py`; 224 `~/dsh-workspace/mc_work/` + `mc_dump_smplx.py` + the probe run dir. In-service artifacts untouched (F10/F17c/PC2); take6V2 mainline unaffected. Docs reorganized: `docs/data-quality.md` (authoritative roadmap), `motion-calibration.md` rewritten to the frozen-training positioning, `docs/README.md` index added.
+
+### 224 git resync: GitHub https dead / ssh-443 alive, origin switched to ssh (2026-10-16)
+
+**Why**: the doc-restructure review exposed that 224's `~/sim2sim/wbc_fsm` had drifted — its `.git` sat at `5367638` on `feature/g1-23dof-port` (29 commits behind, rsync-era) and the obs-v2 sources (`base_state_estimator.cpp`, dual-contract tracking23.h/config, IOSDK tau_est/rpy pickup) were absent (last file sync = the 2026-10-12 F17c rsync). Both configs and all four in-service model/motion artifacts were md5-identical to the repo — only code/docs had drifted.
+
+**Channel fix (user-directed)**: 224 → GitHub **https times out** (no proxy configured), but **ssh works on both 22 and 443** — the only gap was 224's ed25519 key not being bound to GitHub. The user added it as a read-only deploy key on the repo; `~/.ssh/config` on 224 now routes `github.com → ssh.github.com:443` (same as wsk — both machines ride 443); `origin` switched from https to `git@github.com:550966139/wbc_fsm.git`. Gitee channel verified authenticated from both machines (account wenshikin) as a standby — the repo stays GitHub-managed only (user decision; no Gitee mirror).
+
+**Sync (pure git, no rsync)**: the pre-sync state was snapshotted on 224 as the local-only branch `backup-20261016-presync` @ `c9c4143` (rsync-era dirty tree + untracked artifacts via `git add -A`); then `git fetch origin` → `git checkout feature/g1-23dof-dance` @ `6483978`. Worktree clean after checkout; 224-local untracked training artifacts and `build/` untouched.
+
+**Validation on 224** (exact commands, real results):
+
+```sh
+cmake --build build -j4                                   # clean; base_state_estimator.cpp compiled, wbc_fsm linked
+cd build && ctest --output-on-failure                     # 7/7 passed (25.97 s; incl. g1_onnx_and_fsm_offline 25.93 s)
+cd .. && ./build/wbc_fsm --check --config config/g1_23dof.json   # PASS + Tracking line (124- or 127-input), exit 0
+```
+
+First time the obs-v2 dual-contract chain builds and passes on 224. PC2 untouched; the 224 training-repo env_cfgs drift untouched; the backup branch stays local to 224.
