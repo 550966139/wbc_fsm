@@ -1,13 +1,27 @@
 # G1 23DoF implementation ledger
 
-Updated: 2026-10-12 (user decision (a): revised bars accepted, take2-F17c replaces F2 in slot 1 on repo + 224; PC2 swap awaits the attended session). Branch: `feature/g1-23dof-dance`.
-Reference baseline: `b352409`; previous adaptation HEAD: `2434c85`.
+**This file is an append-only chronological history** (newest entries at the end). For current state — in-service deployment matrix, branch status, open campaigns and pending decisions — read [STATUS.md](STATUS.md); use the campaign index below to locate history. Append new entries at the end; do not rewrite past entries.
+
+Reference baseline: `b352409`; previous adaptation HEAD: `2434c85`. Branch: `feature/g1-23dof-dance` (doc restructure 2026-10-16; last campaign entry = MC close-out 2026-10-15).
 
 Goal: adapt the reference controller for a G1 23DoF robot, then validate and deploy on its PC2. The implemented policy path covers damping, fixed stand, flat-terrain velocity control, and 23DoF whole-body motion tracking (dance). Original 29DoF sources/resources remain as references. 23DoF WBC/dance tracking is not implemented by truncating those models.
 
-## Campaign summary 2026-09-28/29 ("无限接近" round 1)
+## Campaign index
 
-One continuous arc from audit to hardware: independent local acceptance re-run (F9 3/3) → **P0 real-ending recovery** (GMR warm-start-lock fix + full-length reference; F10 trained, sim 3/3, dance metrics beat F9 across the board: kick 86 % vs 75 %, ankle margin 0.161, slide p50 0.012-0.018) → **first-ever hardware dance session (F10, 3/3 clean, zero latches)** → reward-space exploration closed out (F11/F12 leg-position terms REJECTED — kick-window ankle fold via 0.09→0.37 rad overshoot; **F13 wide-std arm term PASSED — ending fidelity solved** (drift 2.03→0.83 m, arm-out pose 1.0→0.07-0.11 rad) at the cost of kick 86→73 %; F14 continuation REJECTED — overtraining) → infrastructure (PC2 boot-time auto-release validated on a real power cycle; 1 Hz `[track]` joint-snapshot logging in the controller; 224 acceptance tooling rebuilt; PC2 corrected — it never had any tracking deployment before F10). Deployment state: **F10 in service on PC2 + repo + 224**; F13 staged; next levers = R6-class kick-window reference ankle clamp + F13 recipe, H0 hardware capture. Sections below are the chronological record.
+| Campaign | Dates | Starts at section |
+|---|---|---|
+| Velocity: train → sim2sim → v1 retrain → guard recal | 09-17..09-21 | `Trained 23DoF policy (2026-09-17)` |
+| PC2 deployment prep + hardware stand/walk first win + stand gains | 09-18 | `PC2 deployment prep (2026-09-18...)` |
+| Tracking Phase 1-2: contract, smoke chain, dance1, take6 QC, num_envs=1 root cause | 09-21..09-22 | `Tracking (dance) policy state, Phase 1` |
+| Dance ↔ walk policy chain + sim re-pass fixes | 09-22 | `Dance ↔ walk policy chain (2026-09-22...)` |
+| take6 fidelity ladder: R1-R6 surgeries, F1-F15, F9/F10 in service, first hardware dance | 09-23..09-29 | `Foot-artifact investigation (2026-09-23...)` |
+| take2 generalization + dual-motion library (F1r4 slot 1) | 09-30 | `take2 generalization campaign...` |
+| H0 hardware capture + F16 DR retrain (verdict 10-08) | 09-30..10-08 | `H0 hardware capture session (2026-09-30...)` |
+| take2 F2 slot swap, F3 rejection, F17 leg ladder → F17c slot 1 | 10-09..10-12 | `take2F2 — F1 weak-window fix...` |
+| take6 F18/F18a leg-term transfer (deep-crouch capability wall) | 10-12 | `take6-F18 leg-term transfer OPENED` |
+| obs-v2: estimator, dual-contract v2, take6-V2 acceptance (P5 pending) | 10-13 | `obs-v2 OPENED (2026-10-13...)` |
+| take2 r5 reference rebuild + F20/F20b retrain | 10-14..10-15 | `take2 r5 reference rebuild...` |
+| MC motion-calibration campaign + close-out (training line frozen) | 10-15 | `MC campaign (motion calibration...)` |
 
 ## Implemented locally
 
@@ -142,7 +156,6 @@ The v1 policy was trained with the stock push event (`push_by_setting_velocity`,
 - **Launch**: `python scripts/train.py Unitree-G1-23Dof-Flat --env.scene.num-envs=4096 --agent.logger tensorboard`; log `/tmp/train_push_20260920_171500.log`, run dir `logs/rsl_rl/g1_23dof_velocity/2026-09-20_17-14-55`. Trap recorded: mjlab's runner cfg defaults `logger=wandb` and installed wandb 0.30.0 + pydantic 2.13 crashes on `wandb.Settings(start_method=...)` — always pass `--agent.logger tensorboard` explicitly.
 - **Early metrics vs v1** (harder task, slower start expected): iter 230 episode length 648 / mean reward −7.3 / termination −0.127, vs v1 iter 200 at 941 / 18.9 / −0.026. Uptrend to be confirmed around iteration 1000.
 - **Remaining after completion**: checkpoint selection (`/tmp/select_checkpoint.py`) → export (`/tmp/export_from_ckpt.py`, obs_dim=81) → sim2sim acceptance including a NEW scripted push-impulse test (inject a short torso force in sim; pass = recovers without falling) → recalibrate `max_target_step`/`max_tracking_error` from the new action envelope → PC2 attended model swap (v1 kept as rollback).
-
 
 ## PC2 deployment prep (2026-09-18, host 10.10.16.184:15389)
 
@@ -673,7 +686,6 @@ User goal: add a second dance (`take2__IMG_0049.mp4`, a structurally different c
 
 ## Remaining work / missing inputs
 
-
 - [x] Obtain/train a compatible `Unitree-G1-23Dof-Flat` policy and preserve its actual exported configuration and external weights. (2026-09-17: trained on 192.168.3.224; `model_4900.pt` checkpoint selected after a mid-run PPO collapse; provenance in `model/g1_23dof/`.)
 - [x] Verify the policy in a matching 23DoF MuJoCo scene, including failure and recovery cases. (2026-09-17: sim2sim closed loop on 192.168.3.224 — entry, zero-command standing, 0.2 m/s walking, stop, L2+B latch and band-assisted recovery all pass; details above.)
 - [ ] Confirm robot model/firmware, PC2 architecture/OS, DDS interface and SSH access. (2026-09-18: PC2 confirmed aarch64/Ubuntu 20.04/eth0, `mode_machine=4`; robot firmware version string still to be recorded at first attended session.)
@@ -775,6 +787,26 @@ Whole-dance maxima for comparison: knee 137° / 636°/s, hip_pitch 80° / 397°/
 
 **F17b turn-push profile (eval_turn_push.py, 1 m/s mid-turn)**: turn1 **56 %** (72/128, disp p50 1.05 m), turn2 12 % (7/56), turn3 **10 %** (5/49) — vs F17's 5.5 %/0.8 %/55 %: the extra 30k iterations traded turn1 robustness away and recovered turn3. Push robustness per window is NOT stable across training; turn1's gain was not consolidated. F17b's free acceptance (guards 1.8/4.8 from envelopes 1.162/3.167) still queued per the ladder — the 3/3 latch question is separate from the push profile.
 
+### F17 verdict (2026-10-10 00:30): REJECTED on pre-registration — F2 stays; the leg mechanism is validated, drift moved to the front of the queue
+
+**Training completed** (145000/145001, 6h51m): final mean reward 160.5 (F2 ~147), error_joint_pos oscillating 0.50-0.88 (still not settled — the reason for the F17b continuation below). Export sha verified path: `~/dsh-workspace/take2_pipeline/policy_take2f17_145000.onnx`; guards from offline replay: envelopes step 1.070 / err 2.953 ×1.5 → **1.7 / 4.5** (staging `~/sim2sim_g1/f17_staging/`, motion CSV = the unchanged take2 chain).
+
+**Acceptance: 2/3, one REAL mid-dance latch** — r1/r3 full-dance f=2900 with only the known post-complete FixedStand tilt artifact; **r2 latched at t≈26 s (`excessive joint target step`, joint 6 r_hip_pitch 1.95 rad in one cycle)** after a poor turn1 (r2 turn1 mpjpe 0.438; r3 0.456; r1 0.264 — turn1 remains the high-variance window; the r2 divergence grew from there).
+
+**fidelity23 vs pre-registered bars** (r1/r3; r2 partial after latch):
+- 3/3 zero-latch: **FAIL** (2/3). MPJPE ≤0.18: **FAIL** (0.196/0.217; F2 0.164-0.177). ankle margin ≥0.15: marginal FAIL (0.145-0.147). apex ≥80 %: PASS (86 %).
+- turn leg std_ratio ≥0.75: **PASS everywhere** (turn1 0.78-0.80, turn2 0.89, turn3 0.82; whole-dance legs 0.55-0.95 with hip_yaw 0.89-0.95, knees 0.80-0.81 vs F2's 0.66-0.76) — **the leg lever works: legs now dance**.
+- turn err_end ≤0.35 m: turn2 **0.15-0.17** and turn3 **0.25** (both better than F2's 0.20-0.24) but turn1 0.39/0.70 — **FAIL on variance**.
+- whole-dance err-vs-ref ≤0.20 m: **FAIL — 0.48/0.51 vs F2's 0.06** (root net 0.65-0.69 m): better leg tracking did NOT contain drift; it increased it.
+- turn1 yaw-Δ: still skipped (+33-39° of +412° — unchanged vs F2); turn2/3 yaw now essentially exact (−360/−331 vs −369/−331).
+- **Turn-push (1 m/s): turn1 folds 59 % → 5.5 % and survivor displacement halved (1.11 → 0.60 m p50) — the hardware "falls without sling during the spin" signature is directly addressed. turn2 19 % → 0.8 %. BUT turn3 regressed 0 % → 55 %** (F2's 0 % was on 43 survivors of a 128-pool already 66 % folded; still, a real new weakness — F17's fuller turn3 commitment costs push tolerance there).
+
+**Verdict: REJECTED per pre-registration (latch 2/3, MPJPE, drift, ankle margin). take2-F2 stays in slot 1.** What the run established:
+1. The joint-space leg term does exactly what it was designed for (leg amplitude + turn1 push robustness + turn2/3 fidelity) — keep it in the recipe.
+2. Turn1's yaw skip is NOT a leg-tracking problem — the policy robustly refuses the 2.3 s / 412° spin nominally (while now surviving perturbations there). Fixing the performance of that window needs a different lever (sampling emphasis on turn1 / acceptance of the skip).
+3. **The plan's obs-v2 trigger has FIRED**: whole-dance root err 0.48-0.51 m ≥ 0.5 with net 0.65+ — drift is now the top open item and reward-side levers are exhausted (F3 root-tighten: worse; F17 legs: worse). Root-position feedback (obs contract v2) is the remaining structural fix — user decision to open.
+4. F17b continuation launched 2026-10-10 00:30 (warm F17@145000 +30k → 175000, run `take2F17b`, same recipe) under the plan's "extend if still oscillating" clause — tests whether the 2/3 latch and MPJPE/ankle margins are convergence artifacts. Artifacts: staging `~/sim2sim_g1/f17_staging/` (cfg + turn-push jsons), captures `~/sim2sim_g1/accept_f17/`, fidelity run `data/runs/take2F17/` (local); nothing landed in the repo model dir (rejected-candidate precedent, same as F3).
+
 ### F17b verdict (2026-10-10 ~09:40): 3/3 latch FIXED, but REJECTED on MPJPE/push/drift — F17c (seed change) launched
 
 **Acceptance 3/3 full-dance zero dance-window latch** (r1 needed 2 buzz re-rolls; r2/r3 first-press) — the F17 mid-dance divergence was indeed a convergence artifact: +30k eliminated it. Fidelity23 (turn-aware): MPJPE 0.172/0.194/0.246 (bar ≤0.18 — r2/r3 fail), ankle margin 0.178-0.184 ✓, apex 81 % ✓, knees std_ratio **0.84 = best of any version** (F17 0.80-0.81, F2 0.66-0.76), ankles 0.74-0.79; turn leg std 0.75-0.88 ✓; turn err_end 0.15-0.29 on r1/r2 but r3 hit 0.37/0.40 (turn1/turn2) — variance grows through the run; whole-dance root err-vs-ref 0.35-0.44 m (F2 0.06, F17 0.48-0.51 — the leg term consistently costs world drift); turn1 yaw still skipped (+65-68° of +412°). Combined with the push profile (turn1 56 %), **F17b REJECTED per pre-registration; F2 stays in slot 1.**
@@ -807,26 +839,6 @@ Cross-candidate pattern now clear (F2 → F17 → F17b): the joint-space leg ter
 ### Elastic-band viewing posture fixed by geometry (2026-10-12 evening, user-driven)
 
 The user noticed the pre-dance stand had the feet off the ground. Band physics from the simulator source (`simulate/src/main.cc`): anchor `{0,0,3.0}`, attach `torso_link` (≈0.95 m at the stand pose, knees 0.3 rad ≈ slightly bent), stiffness 200 N/m — taut distance ≈ **2.05 m**. Consequences: the historical "8×10 → 1.00 m" protocol left the band stretched ~1.05 m ≈ **210 N ≈ 60 % of weight** — every pre-dance stand in accept/viewing history was a partial HANG (cosmetic only: entries gate joints not contact, and the band detaches at dance entry). My interim "1.30 m too slack" reading was also wrong: the robot latched (motors limp → sat down) while the band still lifted ~150 N. **Correct setting: rest length 2.20 m** (band grid is 0.1 m; 2.15 unreachable) = fully slack at stand, fall arrest engages at ~0.15 m torso drop. New viewing flow (`run_view_f17c.sh` / `run_view_f2.sh`, verified end-to-end first-roll): bootstrap lottery (fresh stack → assisted stand → **R2+A policy stand**) → release band to 2.20 m while the POLICY carries the weight (no solo-FixedStand window — its tilt-latch risk is bypassed) → feet on the ground, natural posture → dance → handoff → standing. Operational discovery: the 81 Hz ankle buzz can escalate from an R2+A gate rejection to an **excessive-velocity safety latch** (then all keys are silent except START) — buzz retries need FULL stack restarts, not gate re-presses. Also recorded per the user's pointer: Unitree's public humanoid-video tips (knees near-straight, low step frequency, avoid marching in place, feet slightly together) — aesthetic reference for future retarget/QC choices. Accept scripts intentionally unchanged (1.00 m assisted bootstrap is part of the historical protocol; their metrics measure the band-off dance only).
-
-### F17 verdict (2026-10-10 00:30): REJECTED on pre-registration — F2 stays; the leg mechanism is validated, drift moved to the front of the queue
-
-**Training completed** (145000/145001, 6h51m): final mean reward 160.5 (F2 ~147), error_joint_pos oscillating 0.50-0.88 (still not settled — the reason for the F17b continuation below). Export sha verified path: `~/dsh-workspace/take2_pipeline/policy_take2f17_145000.onnx`; guards from offline replay: envelopes step 1.070 / err 2.953 ×1.5 → **1.7 / 4.5** (staging `~/sim2sim_g1/f17_staging/`, motion CSV = the unchanged take2 chain).
-
-**Acceptance: 2/3, one REAL mid-dance latch** — r1/r3 full-dance f=2900 with only the known post-complete FixedStand tilt artifact; **r2 latched at t≈26 s (`excessive joint target step`, joint 6 r_hip_pitch 1.95 rad in one cycle)** after a poor turn1 (r2 turn1 mpjpe 0.438; r3 0.456; r1 0.264 — turn1 remains the high-variance window; the r2 divergence grew from there).
-
-**fidelity23 vs pre-registered bars** (r1/r3; r2 partial after latch):
-- 3/3 zero-latch: **FAIL** (2/3). MPJPE ≤0.18: **FAIL** (0.196/0.217; F2 0.164-0.177). ankle margin ≥0.15: marginal FAIL (0.145-0.147). apex ≥80 %: PASS (86 %).
-- turn leg std_ratio ≥0.75: **PASS everywhere** (turn1 0.78-0.80, turn2 0.89, turn3 0.82; whole-dance legs 0.55-0.95 with hip_yaw 0.89-0.95, knees 0.80-0.81 vs F2's 0.66-0.76) — **the leg lever works: legs now dance**.
-- turn err_end ≤0.35 m: turn2 **0.15-0.17** and turn3 **0.25** (both better than F2's 0.20-0.24) but turn1 0.39/0.70 — **FAIL on variance**.
-- whole-dance err-vs-ref ≤0.20 m: **FAIL — 0.48/0.51 vs F2's 0.06** (root net 0.65-0.69 m): better leg tracking did NOT contain drift; it increased it.
-- turn1 yaw-Δ: still skipped (+33-39° of +412° — unchanged vs F2); turn2/3 yaw now essentially exact (−360/−331 vs −369/−331).
-- **Turn-push (1 m/s): turn1 folds 59 % → 5.5 % and survivor displacement halved (1.11 → 0.60 m p50) — the hardware "falls without sling during the spin" signature is directly addressed. turn2 19 % → 0.8 %. BUT turn3 regressed 0 % → 55 %** (F2's 0 % was on 43 survivors of a 128-pool already 66 % folded; still, a real new weakness — F17's fuller turn3 commitment costs push tolerance there).
-
-**Verdict: REJECTED per pre-registration (latch 2/3, MPJPE, drift, ankle margin). take2-F2 stays in slot 1.** What the run established:
-1. The joint-space leg term does exactly what it was designed for (leg amplitude + turn1 push robustness + turn2/3 fidelity) — keep it in the recipe.
-2. Turn1's yaw skip is NOT a leg-tracking problem — the policy robustly refuses the 2.3 s / 412° spin nominally (while now surviving perturbations there). Fixing the performance of that window needs a different lever (sampling emphasis on turn1 / acceptance of the skip).
-3. **The plan's obs-v2 trigger has FIRED**: whole-dance root err 0.48-0.51 m ≥ 0.5 with net 0.65+ — drift is now the top open item and reward-side levers are exhausted (F3 root-tighten: worse; F17 legs: worse). Root-position feedback (obs contract v2) is the remaining structural fix — user decision to open.
-4. F17b continuation launched 2026-10-10 00:30 (warm F17@145000 +30k → 175000, run `take2F17b`, same recipe) under the plan's "extend if still oscillating" clause — tests whether the 2/3 latch and MPJPE/ankle margins are convergence artifacts. Artifacts: staging `~/sim2sim_g1/f17_staging/` (cfg + turn-push jsons), captures `~/sim2sim_g1/accept_f17/`, fidelity run `data/runs/take2F17/` (local); nothing landed in the repo model dir (rejected-candidate precedent, same as F3).
 
 ### take2-F17c deployed to slot 1 (2026-10-12, user decision (a): revised bars accepted)
 
@@ -896,6 +908,18 @@ Velocity-only increment chosen (127-dim = 124 + body-frame base_lin_vel; no `mot
 
 **Protocol note (Phase 4 risk)**: with both 940 Hz capture processes attached, F10 latched 2/2 at f=600 (deep-crouch window) — capture DDS load perturbs exactly the fragile window (no-capture F10 run completed clean the same morning; take2-F17c never showed this). Phase 4 acceptance needs a load mitigation (decimated capture rate, or capture fewer fields, or accept and document).
 
+**Phase 1 tooling notes**: dual-topic capture in ONE python process segfaults (unitree_sdk2py, two subscribers + accumulating callbacks) — the proven pattern is two separate processes (`cap_low_full.py` + `cap_sport_full.py`); single-subscriber with numpy import is stable at 940 Hz.
+
+### obs-v2 Phase 2 COMPLETE (2026-10-13 ~10:30): dual-contract deployment chain, 7/7 green
+
+Deployment landed as **runtime dual contract** (one config = one contract version; v1 in-service configs unchanged and still load — `--check` PASS on the shipped dual-motion config after the change):
+- `include/common/tracking23.h`: `kTrackingObsSizeV2=127`, v2 offsets (base_lin_vel **[52:55] before gyro**, gyro 55 / joint_pos 58 / joint_vel 81 / last_action 104), `trackingObsWidth(contract)` selector, `observationTracking23(..., const std::array<float,3>* baseLinVel = nullptr)` (nullptr = v1 build, tail zeroed).
+- NEW `include/common/base_state_estimator.h` + `src/common/base_state_estimator.cpp`: frozen offline estimator ported to plain-float C++ (leg FK/Jacobian with the XML fixed-quats, 4 sole candidates, load-fraction 0.28 + swing gate 1.8 stance, IMU complementary β=0.98, one-pole prefilters 5/4/15 Hz); output = pelvis-origin velocity + gyro×r_IMU (0.04525,0,−0.08339) matching the training sensor frame; non-finite inputs ignored (early return).
+- `IOSDK.cpp` now copies `tau_est`/`ddq` + IMU `rpy` (ddq kept for completeness; the sim bridge leaves it zero and nothing depends on it); `LowlevelState.h` IMU gains `rpy[3]`.
+- `config_tracking23.h`: contract v1 or v2 accepted, `observation_size` must match the string (`obsWidth` on ConfigTracking23); `State_Tracking23` validates/infers with `obsWidth_` and feeds the estimator only on v2.
+- `scripts/replay_tracking23.py`: width auto-detected from the ONNX input (127 inserts a zeroed velocity block before gyro); `src/main.cpp` message generalized; `export_from_ckpt.py` needs no change (obs_dim arg).
+- Tests: `tracking23_contract_test` (v2 layout + lever-term + estimator quiet-stance/nan cases; estimator source linked), `config_tracking23_test` (v2 accept + both width-mismatch rejects), `onnx_preflight_test.py` (127-width synthetic graph loads, wrong-width model rejected, expected strings updated). **Host 6/6 + full build 7/7 PASS; in-service v1 `--check` PASS.** clang-format applied, `git diff --check` clean.
+
 ### obs-v2 Phase 3 PRE-REGISTRATION + launch (2026-10-13)
 
 Variant live on 224 (verified: actor terms `command/anchor_ori/base_lin_vel/base_ang_vel/joint_pos/joint_vel/actions` = **127**, backups `.bak-20261013-obs2`): task `Unitree-G1-23Dof-Tracking-Vel127`. Recipe = **F18 recipe unchanged** (legs std 0.25/w 0.5 + fold termination, DR off, arm term off) + the 127-dim obs — single variable vs F18. Cold start (no warm across 124→127), `num_envs 512`, episode 40 s, seed 20261013, `max_iterations 125000`, run `take6V2`.
@@ -925,18 +949,6 @@ Read: the velocity-feedback hypothesis is CONFIRMED for the F18 wall (bar 7 + am
 **Viewing tool (2026-10-13/14)**: `bash ~/sim2sim_g1/run_view_v2.sh [--band]` — one-shot full-stack restart → auto START/band/settle → key-5 dance → optional band detach; ankle-basin auto re-roll (≤5); smoke-tested end-to-end (one basin re-roll then a full clean dance). `--band` keeps the support attached (no post-dance tilt latch — preferred for back-to-back replay viewing).
 
 **Ops note (poller false alarm, 2026-10-13 night)**: the wsk-side `~/.ssh/known_hosts` entry for `[192.168.3.224]:3967` vanished mid-campaign, making the completion poller misreport "process gone" while training was actually running to completion (12 h 49 m). Any future "training dead" alarm from this rig's pollers should first be cross-checked against a fresh ssh + the log tail before acting.
-
-**Phase 1 tooling notes**: dual-topic capture in ONE python process segfaults (unitree_sdk2py, two subscribers + accumulating callbacks) — the proven pattern is two separate processes (`cap_low_full.py` + `cap_sport_full.py`); single-subscriber with numpy import is stable at 940 Hz.
-
-### obs-v2 Phase 2 COMPLETE (2026-10-13 ~10:30): dual-contract deployment chain, 7/7 green
-
-Deployment landed as **runtime dual contract** (one config = one contract version; v1 in-service configs unchanged and still load — `--check` PASS on the shipped dual-motion config after the change):
-- `include/common/tracking23.h`: `kTrackingObsSizeV2=127`, v2 offsets (base_lin_vel **[52:55] before gyro**, gyro 55 / joint_pos 58 / joint_vel 81 / last_action 104), `trackingObsWidth(contract)` selector, `observationTracking23(..., const std::array<float,3>* baseLinVel = nullptr)` (nullptr = v1 build, tail zeroed).
-- NEW `include/common/base_state_estimator.h` + `src/common/base_state_estimator.cpp`: frozen offline estimator ported to plain-float C++ (leg FK/Jacobian with the XML fixed-quats, 4 sole candidates, load-fraction 0.28 + swing gate 1.8 stance, IMU complementary β=0.98, one-pole prefilters 5/4/15 Hz); output = pelvis-origin velocity + gyro×r_IMU (0.04525,0,−0.08339) matching the training sensor frame; non-finite inputs ignored (early return).
-- `IOSDK.cpp` now copies `tau_est`/`ddq` + IMU `rpy` (ddq kept for completeness; the sim bridge leaves it zero and nothing depends on it); `LowlevelState.h` IMU gains `rpy[3]`.
-- `config_tracking23.h`: contract v1 or v2 accepted, `observation_size` must match the string (`obsWidth` on ConfigTracking23); `State_Tracking23` validates/infers with `obsWidth_` and feeds the estimator only on v2.
-- `scripts/replay_tracking23.py`: width auto-detected from the ONNX input (127 inserts a zeroed velocity block before gyro); `src/main.cpp` message generalized; `export_from_ckpt.py` needs no change (obs_dim arg).
-- Tests: `tracking23_contract_test` (v2 layout + lever-term + estimator quiet-stance/nan cases; estimator source linked), `config_tracking23_test` (v2 accept + both width-mismatch rejects), `onnx_preflight_test.py` (127-width synthetic graph loads, wrong-width model rejected, expected strings updated). **Host 6/6 + full build 7/7 PASS; in-service v1 `--check` PASS.** clang-format applied, `git diff --check` clean.
 
 ### take2 r5 reference rebuild: anti-basin-flip retarget + R2 continuity + F20 retrain (2026-10-14, F20 training)
 
